@@ -10,7 +10,8 @@ from .logger import (
     setup_logging,
     OperationLogger,
     create_operation_logger,
-    log_performance
+    log_performance,
+    get_current_log_file
 )
 from .helpers import (
     sanitize_filename,
@@ -59,4 +60,7 @@ __all__ = [
     'get_current_timestamp',
     'format_timestamp',
     'create_backup_filename'
+
+    'reconfigure_logging_for_playlist',
+    'get_current_log_file'
 ]

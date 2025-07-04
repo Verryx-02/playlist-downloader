@@ -7,16 +7,14 @@ import sys
 import click
 import functools
 from pathlib import Path
-from typing import Optional, List, Dict, Any
-import json
 
 from .config.settings import get_settings, reload_settings
 from .config.auth import get_auth, reset_auth
 from .spotify.client import get_spotify_client
 from .sync.synchronizer import get_synchronizer
 from .lyrics.processor import get_lyrics_processor
-from .utils.logger import configure_from_settings, get_logger
-from .utils.helpers import format_duration, format_file_size
+from .utils.logger import configure_from_settings, get_logger, get_current_log_file
+from .utils.helpers import format_duration
 from .utils.validation import (
     validate_spotify_url, 
     validate_output_directory,
@@ -680,6 +678,13 @@ def doctor():
         click.echo(f"✅ Output directory: {output_dir}")
     else:
         click.echo(f"⚠️ Output directory: {output_dir} (will be created)")
+
+    # Check current logging setup
+    current_log = get_current_log_file()
+    if current_log:
+        click.echo(f"✅ Logging: {current_log}")
+    else:
+        click.echo("ℹ️ Logging: Console only (will switch to playlist-specific when syncing)")
     
     # Summary
     if issues:

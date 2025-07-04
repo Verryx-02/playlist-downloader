@@ -104,8 +104,8 @@ class MetadataConfig:
 class LoggingConfig:
     """Logging configuration"""
     level: str = "INFO"
-    file: str = "playlist-dl.log"
-    max_size: str = "10MB"
+    file: str = ""
+    max_size: str = "50MB"
     backup_count: int = 3
     console_output: bool = True
     colored_output: bool = True

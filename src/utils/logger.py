@@ -157,7 +157,108 @@ def setup_logging(
     logger = logging.getLogger('playlist-downloader')
     logger.info(f"Logging initialized - Level: {level}, Console: {console_output}, File: {log_file}")
 
+def reconfigure_logging_for_playlist(
+    playlist_directory: Path,
+    level: str = "INFO",
+    max_size: str = "50MB",
+    backup_count: int = 3
+) -> None:
+    """
+    Reconfigure logging to write to playlist-specific log file
+    
+    Args:
+        playlist_directory: Directory of the playlist
+        level: Logging level
+        max_size: Maximum log file size before rotation
+        backup_count: Number of backup log files to keep
+    """
+    try:
+        # Create logs directory in playlist folder
+        logs_directory = playlist_directory / "logs"
+        logs_directory.mkdir(parents=True, exist_ok=True)
+        
+        # Define log file path
+        log_file_path = logs_directory / "playlist-dl.log"
+        
+        # Get root logger
+        root_logger = logging.getLogger()
+        
+        # Clear existing handlers
+        for handler in root_logger.handlers[:]:
+            handler.close()
+            root_logger.removeHandler(handler)
+        
+        # Parse max_size to bytes
+        size_bytes = parse_size(max_size)
+        
+        # Create new file handler with rotation
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_file_path,
+            maxBytes=size_bytes,
+            backupCount=backup_count,
+            encoding='utf-8'
+        )
+        
+        # Set logging level
+        numeric_level = getattr(logging, level.upper(), logging.INFO)
+        root_logger.setLevel(numeric_level)
+        file_handler.setLevel(numeric_level)
+        
+        # Create console handler too
+        console_handler = ProgressHandler(sys.stdout)
+        console_handler.setLevel(numeric_level)
+        
+        # Set formatters
+        file_formatter = logging.Formatter(
+            fmt='%(asctime)s | %(name)-30s | %(levelname)-8s | %(funcName)-20s | %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        console_formatter = ColoredFormatter(
+            fmt='%(asctime)s | %(name)-20s | %(levelname)-8s | %(message)s',
+            use_colors=True
+        )
+        
+        file_handler.setFormatter(file_formatter)
+        console_handler.setFormatter(console_formatter)
+        
+        # Add handlers to root logger
+        root_logger.addHandler(file_handler)
+        root_logger.addHandler(console_handler)
+        
+        # Set levels for third-party libraries
+        logging.getLogger('spotipy').setLevel(logging.WARNING)
+        logging.getLogger('urllib3').setLevel(logging.WARNING)
+        logging.getLogger('requests').setLevel(logging.WARNING)
+        logging.getLogger('yt_dlp').setLevel(logging.WARNING)
+        logging.getLogger('ytmusicapi').setLevel(logging.WARNING)
+        
+        # Log the reconfiguration
+        logger = logging.getLogger('playlist-downloader.logging')
+        logger.info(f"Logging reconfigured for playlist: {log_file_path}")
+        logger.info(f"Log rotation: {max_size} max size, {backup_count} backups")
+        
+    except Exception as e:
+        # Fallback to console logging
+        print(f"Failed to reconfigure logging: {e}")
+        setup_logging(level=level, console_output=True, log_file=None)
 
+
+def get_current_log_file() -> Optional[Path]:
+    """
+    Get the current log file path from active file handlers
+    
+    Returns:
+        Path to current log file or None if no file logging
+    """
+    try:
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers:
+            if isinstance(handler, logging.handlers.RotatingFileHandler):
+                return Path(handler.baseFilename)
+        return None
+    except Exception:
+        return None
+    
 def parse_size(size_str: str) -> int:
     """
     Parse size string to bytes
