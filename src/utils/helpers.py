@@ -121,26 +121,90 @@ def sanitize_directory_name(dirname: str, max_length: int = 200) -> str:
     if not dirname:
         return "unknown_directory"
     
-    # Use filename sanitization as base
-    sanitized = sanitize_filename(dirname, max_length, replace_spaces=False)
+    # Remove wrapping quotes and extra whitespace first
+    dirname = dirname.strip()
     
-    # Additional directory-specific rules
+    # AGGRESSIVELY remove quotes from anywhere in the string
+    dirname = dirname.replace('"', '').replace("'", '')
+    
+    # Strip whitespace again after quote removal
+    dirname = dirname.strip()
+    
+    if not dirname:
+        return "unknown_directory"
+    
+    # Normalize unicode characters
+    import unicodedata
+    dirname = unicodedata.normalize('NFKD', dirname)
+    
+    # Remove or replace problematic characters for directories
+    import re
+    invalid_chars = r'[<>:"/\\|?*\x00-\x1f\x7f-\x9f]'
+    dirname = re.sub(invalid_chars, '', dirname)
+    
+    # Remove additional problematic characters
+    dirname = re.sub(r'[^\w\s\-_.,()[\]{}!@#$%^&+=]', '', dirname, flags=re.UNICODE)
+    
+    # Replace multiple whitespace characters with single space
+    dirname = re.sub(r'\s+', ' ', dirname)
+    
+    # Remove leading/trailing whitespace and dots
+    dirname = dirname.strip(' .')
+    
+    # Handle reserved Windows names
+    reserved_names = {
+        'CON', 'PRN', 'AUX', 'NUL',
+        'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+        'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'
+    }
+    
+    if dirname.upper() in reserved_names:
+        dirname = f"_{dirname}"
+    
+    # Truncate if too long
+    if len(dirname) > max_length:
+        dirname = dirname[:max_length]
+    
     # Remove trailing dots which can cause issues on Windows
-    sanitized = sanitized.rstrip('.')
+    dirname = dirname.rstrip('.')
     
     # Ensure directory name doesn't start with dot (hidden directory)
-    if sanitized.startswith('.') and len(sanitized) > 1:
-        sanitized = sanitized[1:]
+    if dirname.startswith('.') and len(dirname) > 1:
+        dirname = dirname[1:]
     
-    # Replace problematic characters that are ok in filenames but not directories
-    sanitized = sanitized.replace('..', '_')
+    # Replace problematic sequences
+    dirname = dirname.replace('..', '_')
     
-    # Ensure minimum length
-    if not sanitized or sanitized.isspace():
-        sanitized = "unknown_directory"
+    # Final validation
+    if not dirname or dirname.isspace():
+        dirname = "unknown_directory"
     
-    return sanitized
+    return dirname
 
+def normalize_playlist_name_for_matching(name: str) -> str:
+    """
+    Normalize playlist name for directory matching
+    
+    Args:
+        name: Original playlist name
+        
+    Returns:
+        Normalized name for comparison
+    """
+    if not name:
+        return ""
+    
+    # Remove quotes and normalize
+    normalized = name.strip().replace('"', '').replace("'", '')
+    
+    # Convert to lowercase for comparison
+    normalized = normalized.lower()
+    
+    # Remove extra spaces
+    import re
+    normalized = re.sub(r'\s+', ' ', normalized).strip()
+    
+    return normalized
 
 def create_safe_playlist_path(base_directory: Path, playlist_name: str) -> Path:
     """
@@ -184,25 +248,36 @@ def create_safe_playlist_path(base_directory: Path, playlist_name: str) -> Path:
     return playlist_path
 
 
-def validate_and_create_directory(directory_path: Union[str, Path]) -> Tuple[bool, Optional[str], Path]:
+def validate_and_create_directory(
+    directory_path: Union[str, Path], 
+    trusted_source: bool = False
+) -> Tuple[bool, Optional[str], Path]:
     """
     Validate and create directory path safely
     
     Args:
         directory_path: Directory path to validate and create
+        trusted_source: If True, allows relative paths from configuration
         
     Returns:
         Tuple of (success, error_message, resolved_path)
     """
     try:
-        path_obj = Path(directory_path).resolve()
+        path_obj = Path(directory_path)
         
-        # Security check - ensure path doesn't escape intended directory
-        # This is a basic check, could be more sophisticated
-        path_str = str(path_obj)
-        if '..' in path_str or path_str.startswith('/'):
-            return False, "Path contains unsafe components", path_obj
-        
+        # For trusted sources (configuration), resolve relative paths safely
+        if trusted_source:
+            # Allow relative paths but resolve them to absolute paths
+            path_obj = path_obj.expanduser().resolve()
+        else:
+            # For untrusted sources (user input), apply strict security checks
+            path_str = str(path_obj)
+            
+            # Security check - prevent directory traversal attacks  
+            if '..' in path_str:
+                return False, "Path contains unsafe components", path_obj
+            
+            path_obj = path_obj.resolve()
         # Create directory if it doesn't exist
         path_obj.mkdir(parents=True, exist_ok=True)
         

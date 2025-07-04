@@ -123,7 +123,10 @@ class TracklistManager:
         """
         try:
             # Validate and create output directory
-            success, error_msg, validated_dir = validate_and_create_directory(output_directory)
+            success, error_msg, validated_dir = validate_and_create_directory(
+                output_directory, 
+                trusted_source=True
+            )
             if not success:
                 raise Exception(f"Cannot create output directory: {error_msg}")
             
@@ -180,7 +183,10 @@ class TracklistManager:
         try:
             # Ensure directory exists
             if not directory.exists():
-                success, error_msg, validated_dir = validate_and_create_directory(directory)
+                success, error_msg, validated_dir = validate_and_create_directory(
+                    directory, 
+                    trusted_source=True
+                )
                 if not success:
                     raise Exception(f"Cannot access directory: {error_msg}")
                 directory = validated_dir

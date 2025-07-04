@@ -48,6 +48,7 @@ def validate_spotify_url(url: str) -> Tuple[bool, Optional[str]]:
         return False, f"Error parsing URL: {e}"
 
 def validate_output_directory(path: str) -> Tuple[bool, Optional[str]]:
+    from .helpers import validate_and_create_directory
     """
     Validate output directory path
     
@@ -63,20 +64,15 @@ def validate_output_directory(path: str) -> Tuple[bool, Optional[str]]:
     try:
         from pathlib import Path
         path_obj = Path(path).expanduser()
-        
-        # Check if parent directory exists or can be created
-        parent = path_obj.parent
-        if not parent.exists():
-            try:
-                parent.mkdir(parents=True, exist_ok=True)
-            except PermissionError:
-                return False, f"Permission denied: {parent}"
-            except Exception as e:
-                return False, f"Cannot create directory: {e}"
-        
-        # Check write permissions
-        if path_obj.exists() and not os.access(path_obj, os.W_OK):
-            return False, f"No write permission: {path_obj}"
+
+        # For user input, use strict validation (trusted_source=False)
+        success, error_msg, validated_path = validate_and_create_directory(
+            path_obj, 
+            trusted_source=False
+        )
+
+        if not success:
+            return False, error_msg
         
         return True, None
         
