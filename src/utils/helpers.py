@@ -7,6 +7,7 @@ import re
 import os
 import unicodedata
 from pathlib import Path
+import time
 from typing import Optional, List, Dict, Any, Union, Tuple
 import string
 import hashlib
@@ -30,25 +31,41 @@ def sanitize_filename(filename: str, max_length: int = 200, replace_spaces: bool
     if not filename:
         return "unknown"
     
+    # Remove wrapping quotes and extra whitespace first
+    filename = filename.strip()
+    
+    # Remove leading/trailing quotes (single and double)
+    while filename and filename[0] in ['"', "'"]:
+        filename = filename[1:]
+    while filename and filename[-1] in ['"', "'"]:
+        filename = filename[:-1]
+    
+    # Strip whitespace again after quote removal
+    filename = filename.strip()
+    
+    if not filename:
+        return "unknown"
+    
     # Normalize unicode characters
     filename = unicodedata.normalize('NFKD', filename)
     
     # Remove or replace problematic characters
-    # Characters not allowed in Windows filenames
-    invalid_chars = r'[<>:"/\\|?*]'
+    # Characters not allowed in Windows filenames + extra problematic ones
+    invalid_chars = r'[<>:"/\\|?*\x00-\x1f\x7f-\x9f]'
     filename = re.sub(invalid_chars, '', filename)
     
-    # Replace control characters
-    filename = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', filename)
+    # Remove additional problematic characters that can cause issues
+    # Emoji and special Unicode characters that can cause path issues
+    filename = re.sub(r'[^\w\s\-_.,()[\]{}!@#$%^&+=]', '', filename, flags=re.UNICODE)
     
-    # Replace multiple spaces with single space
+    # Replace multiple whitespace characters with single space
     filename = re.sub(r'\s+', ' ', filename)
     
     # Replace spaces with underscores if requested
     if replace_spaces:
         filename = filename.replace(' ', '_')
     
-    # Remove leading/trailing whitespace and dots
+    # Remove leading/trailing whitespace and dots (after all processing)
     filename = filename.strip(' .')
     
     # Handle reserved Windows names
@@ -58,7 +75,8 @@ def sanitize_filename(filename: str, max_length: int = 200, replace_spaces: bool
         'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'
     }
     
-    name_part = filename.split('.')[0].upper()
+    # Check if the base name (without extension) is reserved
+    name_part = filename.split('.')[0].upper() if '.' in filename else filename.upper()
     if name_part in reserved_names:
         filename = f"_{filename}"
     
@@ -75,12 +93,135 @@ def sanitize_filename(filename: str, max_length: int = 200, replace_spaces: bool
         else:
             filename = filename[:max_length]
     
-    # Ensure we have a valid filename
-    if not filename or filename in ['.', '..']:
+    # Final validation - ensure we have a valid filename
+    if not filename or filename in ['.', '..'] or filename.isspace():
+        filename = "unknown"
+    
+    # Remove any trailing dots or spaces that might have been introduced
+    filename = filename.rstrip(' .')
+    
+    # Ensure filename is not empty after all processing
+    if not filename:
         filename = "unknown"
     
     return filename
 
+def sanitize_directory_name(dirname: str, max_length: int = 200) -> str:
+    """
+    Sanitize directory name for cross-platform compatibility
+    More aggressive than filename sanitization
+    
+    Args:
+        dirname: Original directory name
+        max_length: Maximum directory name length
+        
+    Returns:
+        Sanitized directory name
+    """
+    if not dirname:
+        return "unknown_directory"
+    
+    # Use filename sanitization as base
+    sanitized = sanitize_filename(dirname, max_length, replace_spaces=False)
+    
+    # Additional directory-specific rules
+    # Remove trailing dots which can cause issues on Windows
+    sanitized = sanitized.rstrip('.')
+    
+    # Ensure directory name doesn't start with dot (hidden directory)
+    if sanitized.startswith('.') and len(sanitized) > 1:
+        sanitized = sanitized[1:]
+    
+    # Replace problematic characters that are ok in filenames but not directories
+    sanitized = sanitized.replace('..', '_')
+    
+    # Ensure minimum length
+    if not sanitized or sanitized.isspace():
+        sanitized = "unknown_directory"
+    
+    return sanitized
+
+
+def create_safe_playlist_path(base_directory: Path, playlist_name: str) -> Path:
+    """
+    Create a safe path for playlist directory
+    
+    Args:
+        base_directory: Base output directory
+        playlist_name: Raw playlist name from Spotify
+        
+    Returns:
+        Safe Path object for playlist directory
+    """
+    # Sanitize playlist name
+    safe_name = sanitize_directory_name(playlist_name)
+    
+    # Create full path
+    playlist_path = base_directory / safe_name
+    
+    # Handle duplicate names by adding suffix
+    counter = 1
+    original_path = playlist_path
+    
+    while playlist_path.exists():
+        # Check if it's actually the same playlist (has tracklist.txt)
+        tracklist = playlist_path / "tracklist.txt"
+        if tracklist.exists():
+            # Could be the same playlist, let caller decide
+            break
+        
+        # Different directory with same name, create unique name
+        safe_name_with_counter = f"{safe_name}_{counter}"
+        playlist_path = base_directory / safe_name_with_counter
+        counter += 1
+        
+        # Prevent infinite loop
+        if counter > 100:
+            safe_name_with_counter = f"{safe_name}_{int(time.time())}"
+            playlist_path = base_directory / safe_name_with_counter
+            break
+    
+    return playlist_path
+
+
+def validate_and_create_directory(directory_path: Union[str, Path]) -> Tuple[bool, Optional[str], Path]:
+    """
+    Validate and create directory path safely
+    
+    Args:
+        directory_path: Directory path to validate and create
+        
+    Returns:
+        Tuple of (success, error_message, resolved_path)
+    """
+    try:
+        path_obj = Path(directory_path).resolve()
+        
+        # Security check - ensure path doesn't escape intended directory
+        # This is a basic check, could be more sophisticated
+        path_str = str(path_obj)
+        if '..' in path_str or path_str.startswith('/'):
+            return False, "Path contains unsafe components", path_obj
+        
+        # Create directory if it doesn't exist
+        path_obj.mkdir(parents=True, exist_ok=True)
+        
+        # Verify it's actually a directory
+        if not path_obj.is_dir():
+            return False, f"Path exists but is not a directory: {path_obj}", path_obj
+        
+        # Check write permissions
+        test_file = path_obj / ".test_write_permission"
+        try:
+            test_file.touch()
+            test_file.unlink()
+        except Exception as e:
+            return False, f"No write permission: {e}", path_obj
+        
+        return True, None, path_obj
+        
+    except Exception as e:
+        return False, f"Directory validation failed: {e}", Path(directory_path)
 
 def format_duration(seconds: Union[int, float]) -> str:
     """

@@ -3,7 +3,7 @@ Playlist synchronization logic for incremental updates and change detection
 Handles sync operations between Spotify playlists and local downloads
 """
 
-import shutil
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Set
 from dataclasses import dataclass
@@ -13,6 +13,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from ..config.settings import get_settings
 from ..utils.logger import get_logger, OperationLogger
 from ..utils.helpers import sanitize_filename, ensure_directory, format_duration
+from ..utils.helpers import (
+    sanitize_filename, 
+    sanitize_directory_name,
+    create_safe_playlist_path,
+    validate_and_create_directory
+)
 from ..spotify.client import get_spotify_client
 from ..spotify.models import SpotifyPlaylist, PlaylistTrack, TrackStatus, LyricsStatus, DownloadStats
 from ..ytmusic.searcher import get_ytmusic_searcher
@@ -157,9 +163,10 @@ class PlaylistSynchronizer:
                 estimated_downloads=0
             )
     
+    
     def _find_playlist_directory(self, playlist: SpotifyPlaylist) -> Path:
         """
-        Find existing playlist directory or create new one
+        Find existing playlist directory or create new one with safe path handling
         
         Args:
             playlist: Spotify playlist
@@ -167,141 +174,158 @@ class PlaylistSynchronizer:
         Returns:
             Path to playlist directory
         """
-        # Try to find existing directory by searching for tracklist files
-        playlist_name_sanitized = sanitize_filename(playlist.name)
+        # Create safe playlist path
+        playlist_path = create_safe_playlist_path(self.output_directory, playlist.name)
         
-        # Check common locations
-        possible_paths = [
-            self.output_directory / playlist_name_sanitized,
-            self.output_directory / playlist.name,
-        ]
+        # Check if this directory already contains our playlist
+        tracklist_path = playlist_path / "tracklist.txt"
+        if tracklist_path.exists():
+            try:
+                # Verify it's the same playlist by checking Spotify ID
+                metadata, _ = self.tracklist_manager.read_tracklist_file(tracklist_path)
+                if metadata.spotify_id == playlist.id:
+                    self.logger.info(f"Found existing playlist directory: {playlist_path}")
+                    return playlist_path
+            except Exception as e:
+                self.logger.warning(f"Could not verify existing playlist: {e}")
         
-        for path in possible_paths:
-            if path.exists() and (path / "tracklist.txt").exists():
-                self.logger.info(f"Found existing playlist directory: {path}")
-                return path
+        # Try alternative names if the directory exists but contains different playlist
+        if playlist_path.exists() and not tracklist_path.exists():
+            self.logger.warning(f"Directory exists but no tracklist found: {playlist_path}")
+            
+            # Search for existing playlist in other directories
+            possible_matches = self._search_existing_playlist(playlist)
+            if possible_matches:
+                return possible_matches[0]
         
-        # Create new directory
-        new_path = self.output_directory / playlist_name_sanitized
-        ensure_directory(new_path)
-        self.logger.info(f"Created new playlist directory: {new_path}")
+        # Validate and create the directory
+        success, error_msg, validated_path = validate_and_create_directory(playlist_path)
         
-        return new_path
-    
-    def _create_initial_sync_plan(
-        self, 
-        playlist: SpotifyPlaylist, 
-        local_directory: Path
-    ) -> SyncPlan:
+        if not success:
+            # Fallback to timestamped directory name
+            fallback_name = f"{sanitize_directory_name(playlist.name)}_{int(time.time())}"
+            fallback_path = self.output_directory / fallback_name
+            
+            self.logger.warning(f"Directory creation failed ({error_msg}), using fallback: {fallback_path}")
+            
+            success, error_msg, validated_path = validate_and_create_directory(fallback_path)
+            if not success:
+                raise Exception(f"Failed to create playlist directory: {error_msg}")
+        
+        self.logger.info(f"Created playlist directory: {validated_path}")
+        return validated_path
+
+
+    def _search_existing_playlist(self, playlist: SpotifyPlaylist) -> List[Path]:
         """
-        Create sync plan for new playlist (full download)
+        Search for existing playlist directory by Spotify ID
         
         Args:
-            playlist: Spotify playlist
-            local_directory: Local directory
+            playlist: Spotify playlist to search for
             
         Returns:
-            SyncPlan for initial download
+            List of matching directory paths
         """
-        operations = []
+        matches = []
         
-        # Add download operation for each track
-        for track in playlist.tracks:
-            operation = SyncOperation(
-                operation_type='download',
-                track=track,
-                reason='new_playlist'
-            )
-            operations.append(operation)
-        
-        return SyncPlan(
-            playlist_id=playlist.id,
-            playlist_name=playlist.name,
-            operations=operations,
-            estimated_downloads=len(operations),
-            estimated_time=len(operations) * 30.0,  # 30 seconds per track estimate
-            requires_reordering=False
-        )
-    
-    def _create_incremental_sync_plan(
-        self, 
-        playlist: SpotifyPlaylist, 
-        local_directory: Path
-    ) -> SyncPlan:
-        """
-        Create sync plan for existing playlist (incremental update)
-        
-        Args:
-            playlist: Current Spotify playlist
-            local_directory: Local directory
+        try:
+            # Search all tracklist files in output directory
+            tracklist_files = self.tracklist_manager.find_tracklist_files(self.output_directory)
             
-        Returns:
-            SyncPlan for incremental sync
-        """
-        operations = []
+            for tracklist_path in tracklist_files:
+                try:
+                    metadata, _ = self.tracklist_manager.read_tracklist_file(tracklist_path)
+                    if metadata.spotify_id == playlist.id:
+                        matches.append(tracklist_path.parent)
+                        self.logger.info(f"Found existing playlist by ID: {tracklist_path.parent}")
+                except Exception as e:
+                    self.logger.debug(f"Could not read tracklist {tracklist_path}: {e}")
+                    continue
         
-        # Read existing tracklist
-        tracklist_path = local_directory / "tracklist.txt"
-        metadata, current_entries = self.tracklist_manager.read_tracklist_file(tracklist_path)
+        except Exception as e:
+            self.logger.warning(f"Error searching for existing playlist: {e}")
         
-        # Compare with current playlist
-        differences = self.tracklist_manager.compare_tracklists(current_entries, playlist.tracks)
-        
-        # Create operations for added tracks
-        for track in differences['added']:
-            operation = SyncOperation(
-                operation_type='download',
-                track=track,
-                reason='track_added'
-            )
-            operations.append(operation)
-        
-        # Create operations for moved tracks
-        if self.detect_moved_tracks:
-            for old_entry, new_track in differences['moved']:
+        return matches
+
+        def _create_incremental_sync_plan(
+            self, 
+            playlist: SpotifyPlaylist, 
+            local_directory: Path
+        ) -> SyncPlan:
+            """
+            Create sync plan for existing playlist (incremental update)
+            
+            Args:
+                playlist: Current Spotify playlist
+                local_directory: Local directory
+                
+            Returns:
+                SyncPlan for incremental sync
+            """
+            operations = []
+            
+            # Read existing tracklist
+            tracklist_path = local_directory / "tracklist.txt"
+            metadata, current_entries = self.tracklist_manager.read_tracklist_file(tracklist_path)
+            
+            # Compare with current playlist
+            differences = self.tracklist_manager.compare_tracklists(current_entries, playlist.tracks)
+            
+            # Create operations for added tracks
+            for track in differences['added']:
                 operation = SyncOperation(
-                    operation_type='move',
-                    track=new_track,
-                    old_position=old_entry.position,
-                    new_position=new_track.playlist_position,
-                    reason='track_moved'
+                    operation_type='download',
+                    track=track,
+                    reason='track_added'
                 )
                 operations.append(operation)
-        
-        # Create operations for tracks needing re-download (failed/missing files)
-        for entry in current_entries:
-            if entry.spotify_id in {t.spotify_track.id for t in playlist.tracks}:
-                # Find corresponding track
-                track = next(t for t in playlist.tracks if t.spotify_track.id == entry.spotify_id)
-                
-                # Check if file exists and is valid
-                if entry.local_file_path:
-                    file_path = local_directory / entry.local_file_path
-                    if not file_path.exists() or not self._validate_local_file(file_path):
-                        operation = SyncOperation(
-                            operation_type='download',
-                            track=track,
-                            reason='file_missing_or_invalid'
-                        )
-                        operations.append(operation)
-                
-                # Check lyrics if enabled
-                if self.sync_lyrics and entry.lyrics_status != LyricsStatus.DOWNLOADED:
-                    # This will be handled during download operation
-                    pass
-        
-        # Estimate time
-        download_ops = [op for op in operations if op.operation_type == 'download']
-        estimated_time = len(download_ops) * 30.0 + len(differences['moved']) * 2.0
-        
-        return SyncPlan(
-            playlist_id=playlist.id,
-            playlist_name=playlist.name,
-            operations=operations,
-            estimated_downloads=len(download_ops),
-            estimated_time=estimated_time,
-            requires_reordering=len(differences['moved']) > 0
-        )
+            
+            # Create operations for moved tracks
+            if self.detect_moved_tracks:
+                for old_entry, new_track in differences['moved']:
+                    operation = SyncOperation(
+                        operation_type='move',
+                        track=new_track,
+                        old_position=old_entry.position,
+                        new_position=new_track.playlist_position,
+                        reason='track_moved'
+                    )
+                    operations.append(operation)
+            
+            # Create operations for tracks needing re-download (failed/missing files)
+            for entry in current_entries:
+                if entry.spotify_id in {t.spotify_track.id for t in playlist.tracks}:
+                    # Find corresponding track
+                    track = next(t for t in playlist.tracks if t.spotify_track.id == entry.spotify_id)
+                    
+                    # Check if file exists and is valid
+                    if entry.local_file_path:
+                        file_path = local_directory / entry.local_file_path
+                        if not file_path.exists() or not self._validate_local_file(file_path):
+                            operation = SyncOperation(
+                                operation_type='download',
+                                track=track,
+                                reason='file_missing_or_invalid'
+                            )
+                            operations.append(operation)
+                    
+                    # Check lyrics if enabled
+                    if self.sync_lyrics and entry.lyrics_status != LyricsStatus.DOWNLOADED:
+                        # This will be handled during download operation
+                        pass
+            
+            # Estimate time
+            download_ops = [op for op in operations if op.operation_type == 'download']
+            estimated_time = len(download_ops) * 30.0 + len(differences['moved']) * 2.0
+            
+            return SyncPlan(
+                playlist_id=playlist.id,
+                playlist_name=playlist.name,
+                operations=operations,
+                estimated_downloads=len(download_ops),
+                estimated_time=estimated_time,
+                requires_reordering=len(differences['moved']) > 0
+            )
     
     def execute_sync_plan(self, sync_plan: SyncPlan, local_directory: Path) -> SyncResult:
         """

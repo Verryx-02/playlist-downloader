@@ -2,7 +2,7 @@
 Tracklist.txt file management for tracking playlist state and sync status
 Handles reading, writing, and parsing of playlist tracking files
 """
-
+import os
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Any
@@ -14,10 +14,10 @@ from ..config.settings import get_settings
 from ..utils.logger import get_logger
 from ..utils.helpers import (
     get_current_timestamp, 
-    format_timestamp,
     create_backup_filename,
-    ensure_directory
+    validate_and_create_directory
 )
+
 from ..spotify.models import SpotifyPlaylist, PlaylistTrack, TrackStatus, LyricsStatus, LyricsSource
 
 
@@ -107,12 +107,12 @@ class TracklistManager:
         }
     
     def create_tracklist_file(
-        self, 
-        playlist: SpotifyPlaylist, 
-        output_directory: Path
+    self, 
+    playlist: SpotifyPlaylist, 
+    output_directory: Path
     ) -> Path:
         """
-        Create new tracklist.txt file for playlist
+        Create new tracklist.txt file for playlist with robust path handling
         
         Args:
             playlist: Spotify playlist object
@@ -122,14 +122,21 @@ class TracklistManager:
             Path to created tracklist file
         """
         try:
-            ensure_directory(output_directory)
-            tracklist_path = output_directory / "tracklist.txt"
+            # Validate and create output directory
+            success, error_msg, validated_dir = validate_and_create_directory(output_directory)
+            if not success:
+                raise Exception(f"Cannot create output directory: {error_msg}")
+            
+            tracklist_path = validated_dir / "tracklist.txt"
             
             # Create backup if file exists
             if tracklist_path.exists() and self.backup_tracklist:
                 backup_path = create_backup_filename(tracklist_path)
-                tracklist_path.rename(backup_path)
-                self.logger.info(f"Created tracklist backup: {backup_path.name}")
+                try:
+                    tracklist_path.rename(backup_path)
+                    self.logger.info(f"Created tracklist backup: {backup_path.name}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to create backup: {e}")
             
             # Create metadata
             metadata = TracklistMetadata(
@@ -149,16 +156,51 @@ class TracklistManager:
             # Write tracklist file
             self._write_tracklist_file(tracklist_path, metadata, playlist.tracks)
             
+            # Verify the file was created successfully
+            if not tracklist_path.exists():
+                raise Exception("Tracklist file was not created successfully")
+            
             self.logger.info(f"Created tracklist: {tracklist_path}")
             return tracklist_path
             
         except Exception as e:
             self.logger.error(f"Failed to create tracklist file: {e}")
             raise Exception(f"Tracklist creation failed: {e}")
+        
+    def _safe_tracklist_path(self, directory: Path) -> Path:
+        """
+        Get safe tracklist path with validation
+        
+        Args:
+            directory: Directory containing tracklist
+            
+        Returns:
+            Safe tracklist path
+        """
+        try:
+            # Ensure directory exists
+            if not directory.exists():
+                success, error_msg, validated_dir = validate_and_create_directory(directory)
+                if not success:
+                    raise Exception(f"Cannot access directory: {error_msg}")
+                directory = validated_dir
+            
+            tracklist_path = directory / "tracklist.txt"
+            
+            # Verify parent directory is accessible
+            if not directory.is_dir():
+                raise Exception(f"Path is not a directory: {directory}")
+            
+            return tracklist_path
+            
+        except Exception as e:
+            self.logger.error(f"Failed to create safe tracklist path: {e}")
+            raise
+
     
     def read_tracklist_file(self, tracklist_path: Path) -> Tuple[TracklistMetadata, List[TracklistEntry]]:
         """
-        Read and parse tracklist.txt file
+        Read and parse tracklist.txt file with robust error handling
         
         Args:
             tracklist_path: Path to tracklist file
@@ -167,11 +209,25 @@ class TracklistManager:
             Tuple of (metadata, track entries)
         """
         try:
-            if not tracklist_path.exists():
-                raise FileNotFoundError(f"Tracklist file not found: {tracklist_path}")
+            # Resolve path to handle any relative/symbolic links
+            resolved_path = tracklist_path.resolve()
             
-            with open(tracklist_path, 'r', encoding='utf-8') as f:
+            if not resolved_path.exists():
+                raise FileNotFoundError(f"Tracklist file not found: {resolved_path}")
+            
+            if not resolved_path.is_file():
+                raise Exception(f"Path exists but is not a file: {resolved_path}")
+            
+            # Check file is readable
+            if not os.access(resolved_path, os.R_OK):
+                raise PermissionError(f"Cannot read tracklist file: {resolved_path}")
+            
+            with open(resolved_path, 'r', encoding='utf-8') as f:
                 content = f.read()
+            
+            # Verify file has content
+            if not content.strip():
+                raise Exception(f"Tracklist file is empty: {resolved_path}")
             
             # Parse metadata and entries
             metadata = self._parse_metadata(content)
@@ -183,6 +239,7 @@ class TracklistManager:
         except Exception as e:
             self.logger.error(f"Failed to read tracklist file: {e}")
             raise Exception(f"Tracklist reading failed: {e}")
+
     
     def update_tracklist_file(
         self, 
