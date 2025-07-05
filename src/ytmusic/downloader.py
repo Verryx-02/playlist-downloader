@@ -178,7 +178,6 @@ class YouTubeMusicDownloader:
             'fragment_retries': self.max_retries,
             'file_access_retries': self.max_retries,
             'extract_flat': False,
-            'logger': None,  # Disable yt-dlp logging completely
         }
         
         # Add FFmpeg location if found

@@ -221,6 +221,9 @@ def download(playlist_url, output, format, quality, no_lyrics, lyrics_source, co
         settings.download.output_directory = output
     if format:
         settings.download.format = format
+        # Force reload of downloader with new format
+        from .ytmusic.downloader import reset_downloader
+        reset_downloader()
     if quality:
         settings.download.quality = quality
     if no_lyrics:
@@ -282,8 +285,12 @@ def download(playlist_url, output, format, quality, no_lyrics, lyrics_source, co
     
     click.echo(f"\n📁 Files saved to: {local_directory}")
     # Force flush output streams
-    sys.stdout.flush()
-    sys.stderr.flush()
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except ValueError:
+        # Ignore if streams are closed
+        pass
 
 
 @cli.command()

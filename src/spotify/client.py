@@ -6,14 +6,18 @@ Handles pagination, rate limiting, and data conversion to internal models
 import re
 import time
 from typing import List, Optional, Dict, Any, Generator, Tuple
-from urllib.parse import urlparse, parse_qs
 import spotipy
 from spotipy.exceptions import SpotifyException
 
 from ..config.auth import get_auth
 from ..config.settings import get_settings
-from .models import SpotifyPlaylist, SpotifyTrack, PlaylistTrack
+from .models import SpotifyPlaylist, SpotifyTrack
 from ..utils.logger import get_logger
+
+# Suppress Spotipy's verbose logging
+import logging
+logging.getLogger('spotipy.client').setLevel(logging.ERROR)
+logging.getLogger('requests.packages.urllib3').setLevel(logging.ERROR)
 
 
 class SpotifyClient:

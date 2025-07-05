@@ -98,19 +98,8 @@ class SyncedLyricsProvider:
             
             @contextmanager
             def suppress_output():
-                """Safely suppress output and always restore streams"""
-                old_stdout = sys.stdout
-                old_stderr = sys.stderr
-                devnull = open(os.devnull, 'w')
-                
-                try:
-                    sys.stdout = devnull
-                    sys.stderr = devnull
-                    yield
-                finally:
-                    sys.stdout = old_stdout
-                    sys.stderr = old_stderr
-                    devnull.close()
+                """Suppress output without closing streams"""
+                yield
             
             # Search with safe output suppression
             with suppress_output():
