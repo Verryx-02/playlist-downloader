@@ -18,9 +18,31 @@ from ..utils.helpers import (
 )
 from ..spotify.models import LyricsSource
 
-# Import syncedlyrics with error handling
+# Import syncedlyrics with error handling and configuration
 try:
+    import os
+    
+    # Set environment variables to reduce verbosity BEFORE importing
+    os.environ['SYNCEDLYRICS_VERBOSE'] = '0'
+    os.environ['MUSIXMATCH_VERBOSE'] = '0'
+    
     import syncedlyrics
+    
+    # Try to disable specific providers that cause spam
+    if hasattr(syncedlyrics, 'config'):
+        try:
+            syncedlyrics.config.MUSIXMATCH_ENABLED = False
+        except:
+            pass
+    
+    # Try other ways to disable musixmatch
+    try:
+        if hasattr(syncedlyrics, 'providers'):
+            # Remove musixmatch from active providers if possible
+            syncedlyrics.providers = [p for p in syncedlyrics.providers if 'musixmatch' not in p.lower()]
+    except:
+        pass
+    
     HAS_SYNCEDLYRICS = True
 except ImportError:
     HAS_SYNCEDLYRICS = False
@@ -60,58 +82,53 @@ class SyncedLyricsProvider:
     
     @retry_on_failure(max_attempts=2, delay=1.0)
     def search_lyrics(self, artist: str, title: str, album: Optional[str] = None) -> Optional[str]:
-        """
-        Search for lyrics using SyncedLyrics
-        
-        Args:
-            artist: Artist name
-            title: Track title
-            album: Album name (optional, not used by syncedlyrics)
-            
-        Returns:
-            Lyrics text or None if not found
-        """
+        """Search for lyrics using SyncedLyrics with safe output handling"""
         if not HAS_SYNCEDLYRICS:
-            self.logger.warning("syncedlyrics library not available")
+            self.logger.debug("syncedlyrics library not available")
             return None
         
         try:
-            self.logger.info(f"Searching SyncedLyrics for: {artist} - {title}")
-            
-            # Apply rate limiting
+            self.logger.debug(f"Searching SyncedLyrics for: {artist} - {title}")
             self._rate_limit()
             
-            # Generate search queries
-            search_queries = self._generate_search_queries(artist, title)
+            # Use context manager for safe stream handling
+            import sys
+            import os
+            from contextlib import contextmanager
             
-            for query in search_queries:
+            @contextmanager
+            def suppress_output():
+                """Safely suppress output and always restore streams"""
+                old_stdout = sys.stdout
+                old_stderr = sys.stderr
+                
                 try:
-                    self.logger.debug(f"SyncedLyrics search: '{query}'")
-                    
-                    # Search for lyrics
-                    lyrics = syncedlyrics.search(query)
-                    
-                    if lyrics:
-                        # Clean and validate lyrics
-                        cleaned_lyrics = clean_lyrics_text(lyrics)
-                        
-                        if validate_lyrics_content(cleaned_lyrics, self.settings.lyrics.min_length):
-                            self.logger.debug(f"SyncedLyrics lyrics found for: {artist} - {title}")
-                            return cleaned_lyrics
-                        else:
-                            self.logger.debug(f"SyncedLyrics lyrics validation failed for: {query}")
-                    else:
-                        self.logger.debug(f"No SyncedLyrics results for: {query}")
-                        
-                except Exception as e:
-                    self.logger.debug(f"SyncedLyrics search failed for '{query}': {e}")
-                    continue
+                    # Redirect to devnull instead of closing streams
+                    with open(os.devnull, 'w') as devnull:
+                        sys.stdout = devnull
+                        sys.stderr = devnull
+                        yield
+                finally:
+                    # Always restore original streams
+                    sys.stdout = old_stdout
+                    sys.stderr = old_stderr
+            
+            # Search with safe output suppression
+            with suppress_output():
+                lyrics = syncedlyrics.search(f"{artist} {title}")
+            
+            # Process results
+            if lyrics:
+                cleaned_lyrics = clean_lyrics_text(lyrics)
+                if validate_lyrics_content(cleaned_lyrics, self.settings.lyrics.min_length):
+                    self.logger.debug(f"SyncedLyrics lyrics found for: {artist} - {title}")
+                    return cleaned_lyrics
             
             self.logger.debug(f"No SyncedLyrics results found for: {artist} - {title}")
             return None
             
         except Exception as e:
-            self.logger.error(f"SyncedLyrics search failed: {e}")
+            self.logger.debug(f"SyncedLyrics search failed: {e}")
             return None
     
     def _generate_search_queries(self, artist: str, title: str) -> List[str]:

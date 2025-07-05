@@ -171,14 +171,18 @@ def setup_logging(
         file_handler.setFormatter(file_formatter)
         root_logger.addHandler(file_handler)
     
-    # Set levels for third-party libraries
-    logging.getLogger('spotipy').setLevel(logging.WARNING)
-    logging.getLogger('urllib3').setLevel(logging.WARNING)
-    logging.getLogger('requests').setLevel(logging.WARNING)
-    logging.getLogger('yt_dlp').setLevel(logging.WARNING)
-    logging.getLogger('ytmusicapi').setLevel(logging.WARNING)
-    logging.getLogger('syncedlyrics').setLevel(logging.WARNING)
-    logging.getLogger('musixmatch').setLevel(logging.WARNING)
+    # Disable all external library logging more aggressively
+    external_libs = [
+        'spotipy', 'urllib3', 'requests', 'yt_dlp', 'ytmusicapi',
+        'syncedlyrics', 'musixmatch', 'megalobiz', 'httpx', 'httpcore',
+        'urllib3.connectionpool', 'requests.packages.urllib3.connectionpool'
+    ]
+
+    for lib in external_libs:
+        logger = logging.getLogger(lib)
+        logger.setLevel(logging.CRITICAL)
+        logger.disabled = True
+        logger.propagate = False
         
     # Log startup message (to file only)
     logger = logging.getLogger('playlist-downloader')
@@ -258,14 +262,18 @@ def reconfigure_logging_for_playlist(
         root_logger.addHandler(file_handler)
         root_logger.addHandler(console_handler)
         
-        # Set levels for third-party libraries
-        logging.getLogger('spotipy').setLevel(logging.WARNING)
-        logging.getLogger('urllib3').setLevel(logging.WARNING)
-        logging.getLogger('requests').setLevel(logging.WARNING)
-        logging.getLogger('yt_dlp').setLevel(logging.WARNING)
-        logging.getLogger('ytmusicapi').setLevel(logging.WARNING)
-        logging.getLogger('syncedlyrics').setLevel(logging.WARNING)
-        logging.getLogger('musixmatch').setLevel(logging.WARNING)
+        # Disable all external library logging more aggressively
+        external_libs = [
+            'spotipy', 'urllib3', 'requests', 'yt_dlp', 'ytmusicapi',
+            'syncedlyrics', 'musixmatch', 'megalobiz', 'httpx', 'httpcore',
+            'urllib3.connectionpool', 'requests.packages.urllib3.connectionpool'
+        ]
+
+        for lib in external_libs:
+            logger = logging.getLogger(lib)
+            logger.setLevel(logging.CRITICAL)
+            logger.disabled = True
+            logger.propagate = False
                 
         # Log the reconfiguration (to file only)
         logger = logging.getLogger('playlist-downloader.logging')

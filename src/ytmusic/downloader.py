@@ -152,27 +152,13 @@ class YouTubeMusicDownloader:
         # Temporary directory for downloads
         self.temp_dir = Path(tempfile.gettempdir()) / "playlist-downloader"
         ensure_directory(self.temp_dir)
-    
-    def _get_ydl_options(
-        self, 
-        output_path: str, 
-        progress_hook: Optional[DownloadProgressHook] = None
-    ) -> Dict[str, Any]:
-        """
-        Get yt-dlp options for audio download
-        
-        Args:
-            output_path: Output file path template
-            progress_hook: Progress callback hook
-            
-        Returns:
-            yt-dlp options dictionary
-        """
-        # Find FFmpeg location
+
+    def _get_ydl_options(self, output_path: str, progress_hook: Optional[DownloadProgressHook] = None) -> Dict[str, Any]:
+        """Get yt-dlp options with complete output suppression"""
         import shutil
+        import os
         ffmpeg_location = shutil.which('ffmpeg')
         
-        # Base options
         options = {
             'format': self._get_format_selector(),
             'outtmpl': output_path,
@@ -184,26 +170,31 @@ class YouTubeMusicDownloader:
             'writesubtitles': False,
             'writeautomaticsub': False,
             'ignoreerrors': False,
-            'no_warnings': False,
+            'quiet': True,
+            'no_warnings': True,
+            'noprogress': True,
             'socket_timeout': self.timeout,
             'retries': self.max_retries,
             'fragment_retries': self.max_retries,
             'file_access_retries': self.max_retries,
             'extract_flat': False,
-            'quiet': True,
-            'no_warnings': True,
-            'logger': self.logger
+            'logger': None,  # Disable yt-dlp logging completely
         }
         
         # Add FFmpeg location if found
         if ffmpeg_location:
             options['ffmpeg_location'] = ffmpeg_location
         
+        # Suppress all output by redirecting to devnull
+        options['logtostderr'] = False
+        options['consoletitle'] = False
+    
+        
         # Add progress hook if provided
         if progress_hook:
             options['progress_hooks'] = [progress_hook]
         
-        # Audio quality settings - SEMPLIFICHIAMO
+        # Audio quality settings
         if self.audio_format == 'mp3':
             options['postprocessors'] = [{
                 'key': 'FFmpegExtractAudio',
@@ -221,10 +212,6 @@ class YouTubeMusicDownloader:
                 'preferredcodec': 'aac',
                 'preferredquality': str(self.bitrate),
             }]
-        
-        # RIMUOVIAMO I POST-PROCESSOR COMPLESSI per ora
-        # Se il trim_silence o normalize sono abilitati, li gestiamo separatamente
-        # per non sovraccaricare yt-dlp
         
         return options
     
