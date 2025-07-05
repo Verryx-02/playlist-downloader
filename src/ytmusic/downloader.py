@@ -131,7 +131,6 @@ class YouTubeMusicDownloader:
         
         # Download configuration
         self.output_directory = self.settings.get_output_directory()
-        self.audio_format = self.settings.download.format
         self.audio_quality = self.settings.download.quality
         self.bitrate = self.settings.download.bitrate
         self.max_concurrent = self.settings.download.concurrency
@@ -152,6 +151,10 @@ class YouTubeMusicDownloader:
         # Temporary directory for downloads
         self.temp_dir = Path(tempfile.gettempdir()) / "playlist-downloader"
         ensure_directory(self.temp_dir)
+
+    @property
+    def audio_format(self):
+        return self.settings.download.format
 
     def _get_ydl_options(self, output_path: str, progress_hook: Optional[DownloadProgressHook] = None) -> Dict[str, Any]:
         """Get yt-dlp options with complete output suppression"""
@@ -205,26 +208,27 @@ class YouTubeMusicDownloader:
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'flac',
             }]
-        elif self.audio_format == 'm4a':
-            options['postprocessors'] = [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'aac',
-                'preferredquality': str(self.bitrate),
-            }]
         
         return options
     
     def _get_format_selector(self) -> str:
         """Get yt-dlp format selector for best audio quality"""
-        if self.audio_quality == 'high':
-            # Best audio quality available
-            return 'bestaudio[acodec!=opus]/best[height<=720]'
-        elif self.audio_quality == 'medium':
-            # Good balance of quality and size
-            return 'bestaudio[abr<=192]/best[height<=480]'
-        else:  # low
-            # Smaller file sizes
-            return 'bestaudio[abr<=128]/best[height<=360]'
+        if self.audio_format == 'm4a':
+            # Per M4A: preferisci AAC nativo in container M4A
+            if self.audio_quality == 'high':
+                return 'bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio'
+            elif self.audio_quality == 'medium': 
+                return 'bestaudio[ext=m4a][abr<=192]/bestaudio[acodec=aac][abr<=192]/bestaudio[abr<=192]'
+            else:  # low
+                return 'bestaudio[ext=m4a][abr<=128]/bestaudio[acodec=aac][abr<=128]/bestaudio[abr<=128]'
+        else:
+            # Logica esistente per altri formati
+            if self.audio_quality == 'high':
+                return 'bestaudio[acodec!=opus]/best[height<=720]'
+            elif self.audio_quality == 'medium':
+                return 'bestaudio[abr<=192]/best[height<=480]' 
+            else:  # low
+                return 'bestaudio[abr<=128]/best[height<=360]'
     
     def _get_audio_quality_value(self) -> str:
         """Get audio quality value for yt-dlp"""

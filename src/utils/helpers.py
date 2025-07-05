@@ -658,9 +658,9 @@ def get_file_extension(format_name: str) -> str:
         File extension with dot
     """
     format_map = {
+        'm4a': '.m4a',
         'mp3': '.mp3',
         'flac': '.flac',
-        'm4a': '.m4a',
         'aac': '.aac',
         'ogg': '.ogg',
         'wav': '.wav'

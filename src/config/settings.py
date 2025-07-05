@@ -27,7 +27,7 @@ class SpotifyConfig:
 class DownloadConfig:
     """Download configuration settings"""
     output_directory: str = "~/Music/Playlist Downloads"
-    format: str = "mp3"  # mp3, flac, m4a
+    format: str = "m4a"  # mp3, flac, m4a
     quality: str = "high"  # low, medium, high
     bitrate: int = 320
     concurrency: int = 3

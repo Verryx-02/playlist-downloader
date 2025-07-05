@@ -495,8 +495,8 @@ class YouTubeMusicSearcher:
             Best SearchResult or None if no good match found
         """
         results = self.search_track(artist, title, duration, album)
-        
-        if results and results[0].total_score >= self.score_threshold:
+    
+        if results:
             return results[0]
         
         return None

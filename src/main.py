@@ -588,6 +588,8 @@ def set(format, quality, output, lyrics_source):
     
     if format:
         settings.download.format = format
+        if format == 'flac':
+            click.echo(click.style("⚠️  FLAC converts from compressed AAC (not true lossless). Consider m4a for best quality.", fg='yellow'))
         changes.append(f"Audio format: {format}")
     
     if quality:

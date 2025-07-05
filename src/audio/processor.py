@@ -194,8 +194,14 @@ class AudioProcessor:
             trimmed_amount = original_duration - trimmed_duration
             
             if trimmed_amount > 1.0:  # More than 1 second trimmed
-                # Export trimmed audio
-                trimmed_audio.export(file_path, format=Path(file_path).suffix[1:])
+                # Export trimmed audio with format mapping for M4A/AAC
+                format_map = {
+                    'm4a': 'mp4',  # M4A files use MP4 container
+                    'aac': 'mp4',  # AAC files also use MP4 container  
+                }
+                file_extension = Path(file_path).suffix[1:]
+                ffmpeg_format = format_map.get(file_extension, file_extension)
+                trimmed_audio.export(file_path, format=ffmpeg_format)
                 
                 self.logger.debug(f"Silence trimmed: {trimmed_amount:.1f}s removed ({format_duration(original_duration)} → {format_duration(trimmed_duration)})")
             else:
