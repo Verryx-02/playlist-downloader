@@ -101,17 +101,19 @@ export GENIUS_API_KEY="your_genius_api_key"
 1. **Authenticate with Spotify**:
 ```bash
 playlist-dl auth login
-```
 
-2. **Download a playlist**:
-```bash
-playlist-dl download "https://open.spotify.com/playlist/37i9dQZF1DX0XUsuxWHRQd"
 ```
-
-3. **Check system status**:
+2. **Check system status**:
 ```bash
 playlist-dl doctor
 ```
+
+3. **Download a playlist**:
+To get the playlist URL go to the playlist you want to download and click on "Share"
+```bash
+playlist-dl download "PLAYLIST_URL"
+```
+
 
 ## 📖 Usage Guide
 
@@ -129,7 +131,8 @@ Options:
 - `--output /path/to/output`: Custom output directory
 - `--concurrent 5`: Number of parallel downloads
 
-#### Sync an Existing Playlist
+#### Sync an Existing Playlist 
+If a certain Playlyst has been modified after you downloaded it, you can only download the changes with the sync command here:
 ```bash
 playlist-dl sync "https://open.spotify.com/playlist/YOUR_PLAYLIST_ID"
 ```
@@ -190,43 +193,12 @@ playlist-dl auth logout
 ### Configuration File
 
 The application uses a YAML configuration file located at `~/.playlist-downloader/config.yaml`:
-
+Make sure to edit it by inserting your Client ID and Client Secret
 ```yaml
-download:
-  output_directory: "~/Music/Playlist Downloads"
-  format: "mp3"
-  quality: "high"
-  bitrate: 320
-  concurrency: 3
-
-lyrics:
-  enabled: true
-  download_separate_files: true
-  embed_in_audio: true
-  format: "lrc"
-  primary_source: "genius"
-  clean_lyrics: true
-
-audio:
-  trim_silence: true
-  normalize: false
-  sample_rate: 44100
-  channels: 2
-
-sync:
-  auto_sync: false
-  sync_lyrics: true
-  detect_moved_tracks: true
+spotify:
+  client_id: "YOUR CLIENT ID"
+  client_secret: "YOUR CLIENT SECRET"
 ```
-
-### Environment Variables
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `SPOTIFY_CLIENT_ID` | Spotify App Client ID | Yes |
-| `SPOTIFY_CLIENT_SECRET` | Spotify App Client Secret | Yes |
-| `GENIUS_API_KEY` | Genius API Token | Optional |
-| `DOWNLOAD_OUTPUT_DIR` | Default output directory | Optional |
 
 ## 📁 File Organization
 
@@ -236,8 +208,6 @@ sync:
     ├── tracklist.txt                    # Sync tracking file
     ├── 01 - Artist - Song Title.mp3     # Audio files
     ├── 01 - Artist - Song Title.lrc     # Synchronized lyrics
-    ├── 02 - Another Artist - Song.mp3
-    ├── 02 - Another Artist - Song.txt   # Plain text lyrics
     └── ...
 ```
 
@@ -248,7 +218,7 @@ The `tracklist.txt` file tracks sync status:
 ```
 # Playlist-Downloader Tracklist
 # Playlist: My Awesome Playlist
-# Spotify ID: 37i9dQZF1DX0XUsuxWHRQd
+# Spotify ID: 37i9dQZF...HRQd
 # Created: 2025-07-03 14:30:00
 # Total tracks: 50
 # Last modified: 2025-07-03 10:15:00
@@ -277,18 +247,11 @@ The `tracklist.txt` file tracks sync status:
 - Free tier: 60 requests/hour
 - Best for English content
 
-
-**Features:**
-- Official Spotify partner
-- Free tier: 2000 requests/day
-- Synchronized lyrics support
-- Multilingual content
-
 ## 🛠️ Advanced Usage
 
 ### Batch Processing
 
-Process multiple playlists:
+Process multiple playlists: (not recommended, but you can try it)
 
 ```bash
 # Create a script for multiple playlists
@@ -388,30 +351,10 @@ playlist-dl doctor
 playlist-dl download "PLAYLIST_URL" --verbose
 ```
 
-### Error Messages
+For other issues check the log files. One is created for each playlist:
 
-| Error | Solution |
-|-------|----------|
-| `Spotify client_id and client_secret are required` | Set environment variables or config |
-| `YouTube Music API validation failed` | Check internet connection |
-| `No lyrics sources are configured` | Set up Genius API keys |
-| `Permission denied writing to output directory` | Check directory permissions |
 
-### Debug Mode
-
-Enable verbose logging:
-
-```bash
-export PLAYLIST_DL_LOG_LEVEL=DEBUG
-playlist-dl download "PLAYLIST_URL" --verbose
-```
-
-Check log file:
-```bash
-tail -f ~/.playlist-downloader/playlist-dl.log
-```
-
-## 🤝 Contributing
+## Contributing
 
 ### Development Setup
 
@@ -419,18 +362,6 @@ tail -f ~/.playlist-downloader/playlist-dl.log
 ```bash
 git clone https://github.com/playlist-downloader/playlist-downloader.git
 cd playlist-downloader
-pip install -e .[dev]
-```
-
-2. **Run tests**:
-```bash
-pytest tests/
-```
-
-3. **Code formatting**:
-```bash
-black src/
-flake8 src/
 ```
 
 ### Architecture Overview
@@ -468,14 +399,14 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 The developers are not responsible for any misuse of this software.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - **Spotify** - For the Web API that makes playlist access possible
 - **YouTube Music** - For providing high-quality audio content
 - **Genius** - For comprehensive lyrics database
 - **Open Source Libraries** - spotipy, yt-dlp, mutagen, and many others
 
-## 📞 Support
+## Support
 
 - **Documentation**: Check this README and inline help (`playlist-dl --help`)
 - **Issues**: Report bugs on [GitHub Issues](https://github.com/playlist-downloader/playlist-downloader/issues)
