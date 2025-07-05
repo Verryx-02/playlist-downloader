@@ -1,6 +1,6 @@
 """
 Logging configuration and utilities for Playlist-Downloader
-Provides colored console output and file logging with rotation
+Provides colored console output and file logging with separation between user and technical messages
 """
 
 import logging
@@ -16,6 +16,26 @@ from ..config.settings import get_settings
 
 # Initialize colorama for Windows compatibility
 colorama.init()
+
+
+class ConsoleMessageFilter(logging.Filter):
+    """Filter to allow only user-facing messages to console"""
+    
+    def filter(self, record):
+        # Allow all WARNING+ messages
+        if record.levelno >= logging.WARNING:
+            return True
+        
+        # Allow messages explicitly marked for console
+        if hasattr(record, 'console_output') and record.console_output:
+            return True
+        
+        # Allow messages from specific console loggers
+        if record.name.endswith('.console') or record.name.endswith('.user'):
+            return True
+        
+        # Block everything else (DEBUG/INFO technical messages)
+        return False
 
 
 class ColoredFormatter(logging.Formatter):
@@ -40,7 +60,8 @@ class ColoredFormatter(logging.Formatter):
         """
         super().__init__()
         self.use_colors = use_colors
-        self.fmt = fmt or '%(asctime)s | %(name)-20s | %(levelname)-8s | %(message)s'
+        # Simpler format for console (user-facing)
+        self.fmt = fmt or '%(message)s'
         
     def format(self, record: logging.LogRecord) -> str:
         """Format log record with colors"""
@@ -89,7 +110,7 @@ def setup_logging(
     backup_count: int = 3
 ) -> None:
     """
-    Setup application logging configuration
+    Setup application logging configuration with separated console/file output
     
     Args:
         level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
@@ -104,25 +125,29 @@ def setup_logging(
     
     # Get root logger
     root_logger = logging.getLogger()
-    root_logger.setLevel(numeric_level)
+    root_logger.setLevel(logging.DEBUG)  # Capture everything, filter at handler level
     
     # Clear existing handlers
     root_logger.handlers.clear()
     
-    # Console handler
+    # Console handler - only user-facing messages (WARNING+ or explicitly marked)
     if console_output:
         console_handler = ProgressHandler(sys.stdout)
-        console_handler.setLevel(numeric_level)
+        console_handler.setLevel(logging.DEBUG)  # Let filter decide what to show
         
-        # Use colored formatter for console
+        # Add filter to show only user-facing messages
+        console_filter = ConsoleMessageFilter()
+        console_handler.addFilter(console_filter)
+        
+        # Use simple colored formatter for console
         console_formatter = ColoredFormatter(
-            fmt='%(asctime)s | %(name)-20s | %(levelname)-8s | %(message)s',
+            fmt='%(message)s',  # Very simple format for users
             use_colors=colored_output
         )
         console_handler.setFormatter(console_formatter)
         root_logger.addHandler(console_handler)
     
-    # File handler with rotation
+    # File handler with full detail logging
     if log_file:
         log_path = Path(log_file)
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -136,9 +161,9 @@ def setup_logging(
             backupCount=backup_count,
             encoding='utf-8'
         )
-        file_handler.setLevel(numeric_level)
+        file_handler.setLevel(logging.DEBUG)  # Capture everything for file
         
-        # File formatter (no colors)
+        # Detailed formatter for file (technical details)
         file_formatter = logging.Formatter(
             fmt='%(asctime)s | %(name)-30s | %(levelname)-8s | %(funcName)-20s | %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
@@ -152,10 +177,13 @@ def setup_logging(
     logging.getLogger('requests').setLevel(logging.WARNING)
     logging.getLogger('yt_dlp').setLevel(logging.WARNING)
     logging.getLogger('ytmusicapi').setLevel(logging.WARNING)
-    
-    # Log startup message
+    logging.getLogger('syncedlyrics').setLevel(logging.WARNING)
+    logging.getLogger('musixmatch').setLevel(logging.WARNING)
+        
+    # Log startup message (to file only)
     logger = logging.getLogger('playlist-downloader')
     logger.info(f"Logging initialized - Level: {level}, Console: {console_output}, File: {log_file}")
+
 
 def reconfigure_logging_for_playlist(
     playlist_directory: Path,
@@ -165,6 +193,7 @@ def reconfigure_logging_for_playlist(
 ) -> None:
     """
     Reconfigure logging to write to playlist-specific log file
+    Maintains console/file separation
     
     Args:
         playlist_directory: Directory of the playlist
@@ -191,7 +220,7 @@ def reconfigure_logging_for_playlist(
         # Parse max_size to bytes
         size_bytes = parse_size(max_size)
         
-        # Create new file handler with rotation
+        # Create new file handler with rotation (full detail)
         file_handler = logging.handlers.RotatingFileHandler(
             log_file_path,
             maxBytes=size_bytes,
@@ -201,12 +230,16 @@ def reconfigure_logging_for_playlist(
         
         # Set logging level
         numeric_level = getattr(logging, level.upper(), logging.INFO)
-        root_logger.setLevel(numeric_level)
-        file_handler.setLevel(numeric_level)
+        root_logger.setLevel(logging.DEBUG)
+        file_handler.setLevel(logging.DEBUG)  # Capture everything for file
         
-        # Create console handler too
+        # Create console handler with filter for user messages only
         console_handler = ProgressHandler(sys.stdout)
-        console_handler.setLevel(numeric_level)
+        console_handler.setLevel(logging.DEBUG)
+        
+        # Add filter for console
+        console_filter = ConsoleMessageFilter()
+        console_handler.addFilter(console_filter)
         
         # Set formatters
         file_formatter = logging.Formatter(
@@ -214,7 +247,7 @@ def reconfigure_logging_for_playlist(
             datefmt='%Y-%m-%d %H:%M:%S'
         )
         console_formatter = ColoredFormatter(
-            fmt='%(asctime)s | %(name)-20s | %(levelname)-8s | %(message)s',
+            fmt='%(message)s',  # Simple format for users
             use_colors=True
         )
         
@@ -231,8 +264,10 @@ def reconfigure_logging_for_playlist(
         logging.getLogger('requests').setLevel(logging.WARNING)
         logging.getLogger('yt_dlp').setLevel(logging.WARNING)
         logging.getLogger('ytmusicapi').setLevel(logging.WARNING)
-        
-        # Log the reconfiguration
+        logging.getLogger('syncedlyrics').setLevel(logging.WARNING)
+        logging.getLogger('musixmatch').setLevel(logging.WARNING)
+                
+        # Log the reconfiguration (to file only)
         logger = logging.getLogger('playlist-downloader.logging')
         logger.info(f"Logging reconfigured for playlist: {log_file_path}")
         logger.info(f"Log rotation: {max_size} max size, {backup_count} backups")
@@ -297,9 +332,57 @@ def get_logger(name: str) -> logging.Logger:
         name: Logger name (typically __name__)
         
     Returns:
-        Logger instance
+        Logger instance with enhanced methods
     """
-    return logging.getLogger(name)
+    logger = logging.getLogger(name)
+    
+    # Add console logging methods
+    def console_info(message: str):
+        """Log message that should appear on console for user"""
+        record = logger.makeRecord(
+            logger.name, logging.INFO, '', 0, message, (), None
+        )
+        record.console_output = True
+        logger.handle(record)
+    
+    def console_warning(message: str):
+        """Log warning that should appear on console"""
+        logger.warning(message)  # Warnings already go to console
+    
+    def console_error(message: str):
+        """Log error that should appear on console"""
+        logger.error(message)  # Errors already go to console
+    
+    def progress_update(message: str):
+        """Log progress update for console"""
+        record = logger.makeRecord(
+            logger.name, logging.INFO, '', 0, message, (), None
+        )
+        record.console_output = True
+        logger.handle(record)
+    
+    # Attach methods to logger
+    logger.console_info = console_info
+    logger.console_warning = console_warning
+    logger.console_error = console_error
+    logger.progress_update = progress_update
+    
+    return logger
+
+
+def get_console_logger(name: str) -> logging.Logger:
+    """
+    Get a logger specifically for console output
+    All messages from this logger will appear on console
+    
+    Args:
+        name: Logger name
+        
+    Returns:
+        Console logger instance
+    """
+    console_name = f"{name}.console"
+    return logging.getLogger(console_name)
 
 
 def configure_from_settings() -> None:
@@ -350,7 +433,7 @@ class LogContext:
 
 
 class OperationLogger:
-    """Logger for tracking long-running operations"""
+    """Logger for tracking long-running operations with animated progress bar"""
     
     def __init__(self, logger: logging.Logger, operation_name: str):
         """
@@ -363,44 +446,92 @@ class OperationLogger:
         self.logger = logger
         self.operation_name = operation_name
         self.start_time = None
+        self.progress_bar = None
         
     def start(self, message: Optional[str] = None) -> None:
-        """Start tracking operation"""
+        """Start tracking operation - show to user"""
         import time
         self.start_time = time.time()
-        msg = message or f"Starting {self.operation_name}"
-        self.logger.info(f"🚀 {msg}")
+        console_msg = message or f"🚀 Starting {self.operation_name}"
+        
+        # To console (user-facing)
+        self.logger.console_info(console_msg)
+        
+        # To file (technical detail)
+        self.logger.info(f"Operation started: {self.operation_name}")
     
     def progress(self, message: str, current: Optional[int] = None, total: Optional[int] = None) -> None:
-        """Log progress update"""
+        """Log progress update with animated progress bar"""
         if current is not None and total is not None:
-            percentage = (current / total) * 100
-            self.logger.info(f"⏳ {self.operation_name}: {message} ({current}/{total}, {percentage:.1f}%)")
+            # To file (detailed)
+            self.logger.info(f"{self.operation_name}: {message} ({current}/{total}, {(current/total)*100:.1f}%)")
+            
+            # To console - create or update progress bar
+            if self.progress_bar is None:
+                from tqdm import tqdm
+                self.progress_bar = tqdm(
+                    total=total,
+                    desc="⚡ Downloading",
+                    bar_format="{desc} {n}/{total} {bar} {percentage:3.0f}%",
+                    ncols=100,
+                    colour='cyan',
+                    ascii=False
+                )
+            
+            # Update progress bar
+            self.progress_bar.n = current
+            self.progress_bar.refresh()
+            
         else:
-            self.logger.info(f"⏳ {self.operation_name}: {message}")
+            # To file
+            self.logger.info(f"{self.operation_name}: {message}")
+            
+            # To console (simple) - only for non-numeric progress
+            if not self.progress_bar:
+                self.logger.progress_update(f"⏳ {message}")
     
     def complete(self, message: Optional[str] = None) -> None:
-        """Mark operation as complete"""
+        """Mark operation as complete - close progress bar"""
+        if self.progress_bar:
+            self.progress_bar.close()
+            self.progress_bar = None
+        
         if self.start_time:
             import time
             duration = time.time() - self.start_time
-            msg = message or f"{self.operation_name} completed in {duration:.2f}s"
-            self.logger.info(f"✅ {msg}")
+            
+            # To console (user-friendly)
+            console_msg = message or f"✅ {self.operation_name} completed"
+            self.logger.console_info(console_msg)
+            
+            # To file (technical detail)
+            self.logger.info(f"Operation completed: {self.operation_name} in {duration:.2f}s")
         else:
-            msg = message or f"{self.operation_name} completed"
-            self.logger.info(f"✅ {msg}")
+            console_msg = message or f"✅ {self.operation_name} completed"
+            self.logger.console_info(console_msg)
+            self.logger.info(f"Operation completed: {self.operation_name}")
     
     def error(self, message: str, exception: Optional[Exception] = None) -> None:
-        """Log operation error"""
+        """Log operation error - close progress bar first"""
+        if self.progress_bar:
+            self.progress_bar.close()
+            self.progress_bar = None
+            
+        console_msg = f"❌ {self.operation_name} failed: {message}"
+        
+        # To console (user-facing)
+        self.logger.console_error(console_msg)
+        
+        # To file (detailed with exception)
         if exception:
-            self.logger.error(f"❌ {self.operation_name} failed: {message}", exc_info=exception)
+            self.logger.error(f"Operation failed: {self.operation_name} - {message}", exc_info=exception)
         else:
-            self.logger.error(f"❌ {self.operation_name} failed: {message}")
+            self.logger.error(f"Operation failed: {self.operation_name} - {message}")
     
     def warning(self, message: str) -> None:
-        """Log operation warning"""
-        self.logger.warning(f"⚠️ {self.operation_name}: {message}")
-
+        """Log operation warning - show to user"""
+        # To file
+        self.logger.warning(f"{self.operation_name}: {message}")
 
 def create_operation_logger(name: str, operation: str) -> OperationLogger:
     """
@@ -419,7 +550,7 @@ def create_operation_logger(name: str, operation: str) -> OperationLogger:
 
 # Performance logging utilities
 def log_performance(func):
-    """Decorator to log function performance"""
+    """Decorator to log function performance (to file only)"""
     import functools
     import time
     
@@ -442,7 +573,7 @@ def log_performance(func):
 
 
 def log_method_calls(cls):
-    """Class decorator to log all method calls"""
+    """Class decorator to log all method calls (to file only)"""
     import functools
     
     for attr_name in dir(cls):

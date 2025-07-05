@@ -33,7 +33,6 @@ class LyricsStatus(Enum):
 class LyricsSource(Enum):
     """Available lyrics sources"""
     GENIUS = "genius"
-    MUSIXMATCH = "musixmatch"
     SYNCEDLYRICS = "syncedlyrics"
     MANUAL = "manual"
     UNKNOWN = "unknown"

@@ -190,6 +190,9 @@ class YouTubeMusicDownloader:
             'fragment_retries': self.max_retries,
             'file_access_retries': self.max_retries,
             'extract_flat': False,
+            'quiet': True,
+            'no_warnings': True,
+            'logger': self.logger
         }
         
         # Add FFmpeg location if found
@@ -295,7 +298,7 @@ class YouTubeMusicDownloader:
         ydl_opts = self._get_ydl_options(str(temp_output), progress_hook)
         
         try:
-            self.logger.info(f"Starting download: {video_id}")
+            self.logger.debug(f"Starting download: {video_id}")
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 # Extract info first to get metadata
@@ -335,10 +338,7 @@ class YouTubeMusicDownloader:
                 file_size = Path(final_path).stat().st_size
                 download_time = time.time() - start_time
                 
-                self.logger.info(
-                    f"Download completed: {video_id} -> {Path(final_path).name} "
-                    f"({format_file_size(file_size)}, {download_time:.1f}s)"
-                )
+                self.logger.debug(f"Download completed: {video_id} -> {Path(final_path).name} ({format_file_size(file_size)}, {download_time:.1f}s)")
                 
                 return DownloadResult(
                     success=True,

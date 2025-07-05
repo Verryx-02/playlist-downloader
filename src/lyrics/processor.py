@@ -3,7 +3,6 @@ Lyrics processing and multi-source management
 Coordinates between different lyrics providers and handles processing, validation, and formatting
 """
 
-import re
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple, Union
@@ -119,7 +118,7 @@ class LyricsProcessor:
         
         self.stats['total_searches'] += 1
         operation_logger = OperationLogger(self.logger, f"Lyrics Search: {artist} - {title}")
-        operation_logger.start()
+        self.logger.debug("Starting lyrics search")
         
         # Determine search order
         search_sources = self._get_search_order(preferred_source)
@@ -131,7 +130,7 @@ class LyricsProcessor:
                 continue
             
             try:
-                operation_logger.progress(f"Searching {source.value}")
+                self.logger.debug(f"Searching {source.value}")
                 
                 # Search with current provider
                 result = self._search_with_provider(source, artist, title, album)
@@ -144,12 +143,12 @@ class LyricsProcessor:
                         self.stats['successful_searches'] += 1
                         self.stats['source_usage'][source] += 1
                         
-                        operation_logger.complete(f"Lyrics found via {source.value}")
+                        self.logger.debug(f"Lyrics found via {source.value}")
                         return processed_result
                     else:
-                        operation_logger.warning(f"Lyrics validation failed from {source.value}")
+                        self.logger.debug(f"Lyrics validation failed from {source.value}")
                 else:
-                    operation_logger.warning(f"No lyrics found from {source.value}")
+                    self.logger.debug(f"No lyrics found from {source.value}")
                     
             except Exception as e:
                 operation_logger.warning(f"Error searching {source.value}: {e}")
@@ -157,7 +156,7 @@ class LyricsProcessor:
         
         # No lyrics found from any source
         self.stats['failed_searches'] += 1
-        operation_logger.error("No lyrics found from any source")
+        self.logger.debug("No lyrics found from any source")
         
         return LyricsProcessingResult(
             success=False,

@@ -369,17 +369,17 @@ class YouTubeMusicSearcher:
         results = self._search_with_threshold(artist, title, duration, album, threshold=65.0, strict_queries=True)
         
         if results:
-            self.logger.info(f"Found with strict search: {artist} - {title}")
+            self.logger.debug(f"Found with strict search: {artist} - {title}")
             return results
         
         # Second attempt: permissive search
-        self.logger.info(f"Strict search failed, trying permissive for: {artist} - {title}")
+        self.logger.debug(f"Strict search failed, trying permissive for: {artist} - {title}")
         results = self._search_with_threshold(artist, title, duration, album, threshold=45.0, strict_queries=False)
         
         if results:
-            self.logger.info(f"Found with permissive search: {artist} - {title}")
+            self.logger.debug(f"Found with permissive search: {artist} - {title}")
         else:
-            self.logger.warning(f"Both searches failed for: {artist} - {title}")
+            self.logger.debug(f"Both searches failed for: {artist} - {title}")
         
         return results
 
@@ -425,9 +425,9 @@ class YouTubeMusicSearcher:
                     raw_results = self._search_ytmusic(query, limit=self.max_results)
 
                     # DEBUG: Log raw results
-                    self.logger.info(f"DEBUG: Query '{query}' returned {len(raw_results)} raw results")
+                    self.logger.debug(f"DEBUG: Query '{query}' returned {len(raw_results)} raw results")
                     for idx, raw in enumerate(raw_results[:3]):  # Log first 3
-                        self.logger.info(f"DEBUG Result {idx}: {raw.get('title', 'NO_TITLE')} by {raw.get('artists', [{}])[0].get('name', 'NO_ARTIST') if raw.get('artists') else 'NO_ARTIST'}")
+                        self.logger.debug(f"DEBUG Result {idx}: {raw.get('title', 'NO_TITLE')} by {raw.get('artists', [{}])[0].get('name', 'NO_ARTIST') if raw.get('artists') else 'NO_ARTIST'}")
                         
                         # Process results
                     for raw_result in raw_results:
@@ -444,7 +444,7 @@ class YouTubeMusicSearcher:
                         self._calculate_scores(search_result, artist, title, duration)
                         
                         # DEBUG: Log scores
-                        self.logger.info(f"DEBUG Score: {search_result.title} by {search_result.artist} = {search_result.total_score:.1f} (threshold: {self.score_threshold})")
+                        self.logger.debug(f"DEBUG Score: {search_result.title} by {search_result.artist} = {search_result.total_score:.1f} (threshold: {self.score_threshold})")
 
                         # Apply score threshold
                         if search_result.total_score >= self.score_threshold:
@@ -518,7 +518,7 @@ class YouTubeMusicSearcher:
         
         for i, (artist, title, duration) in enumerate(tracks):
             try:
-                self.logger.info(f"Searching track {i+1}/{len(tracks)}: {artist} - {title}")
+                self.logger.debug(f"Searching track {i+1}/{len(tracks)}: {artist} - {title}")
                 
                 best_match = self.get_best_match(artist, title, duration)
                 results.append(best_match)

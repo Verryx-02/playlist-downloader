@@ -170,7 +170,7 @@ def status():
 @click.option('--format', type=click.Choice(['mp3', 'flac', 'm4a']), help='Audio format')
 @click.option('--quality', type=click.Choice(['low', 'medium', 'high']), help='Audio quality')
 @click.option('--no-lyrics', is_flag=True, help='Skip lyrics download')
-@click.option('--lyrics-source', type=click.Choice(['genius', 'musixmatch']), help='Lyrics source')
+@click.option('--lyrics-source', type=click.Choice(['genius']), help='Lyrics source')
 @click.option('--concurrent', '-c', type=int, help='Concurrent downloads')
 @click.option('--dry-run', is_flag=True, help='Show what would be downloaded without downloading')
 @handle_error
@@ -230,7 +230,6 @@ def download(playlist_url, output, format, quality, no_lyrics, lyrics_source, co
     if concurrent:
         settings.download.concurrency = concurrent
     
-    click.echo(f"🎵 Processing playlist: {playlist_url}")
     
     # Create sync plan
     with click.progressbar(length=100, label='Analyzing playlist') as bar:
@@ -241,12 +240,7 @@ def download(playlist_url, output, format, quality, no_lyrics, lyrics_source, co
         click.echo("✅ Playlist is already up to date!")
         return
     
-    # Show plan summary
-    click.echo(f"\n📋 Download Plan:")
-    click.echo(f"   Playlist: {sync_plan.playlist_name}")
-    click.echo(f"   Downloads needed: {sync_plan.estimated_downloads}")
-    if sync_plan.estimated_time:
-        click.echo(f"   Estimated time: {format_duration(sync_plan.estimated_time)}")
+    logger.console_info(f"🎵 {sync_plan.playlist_name} ({sync_plan.estimated_downloads} tracks to download)")
     
     if dry_run:
         click.echo("\n🔍 Operations that would be performed:")
@@ -262,9 +256,6 @@ def download(playlist_url, output, format, quality, no_lyrics, lyrics_source, co
         click.echo("❌ Download cancelled")
         return
     
-    # Execute download
-    click.echo("\n🚀 Starting download...")
-    
     # Find local directory
     spotify_client = get_spotify_client()
     playlist_id = spotify_client.extract_playlist_id(playlist_url)
@@ -277,10 +268,11 @@ def download(playlist_url, output, format, quality, no_lyrics, lyrics_source, co
     result = synchronizer.execute_sync_plan(sync_plan, local_directory)
     
     # Show results
-    click.echo(f"\n📊 Download Results:")
-    click.echo(f"   ✅ Successful: {result.downloads_completed}")
-    click.echo(f"   ❌ Failed: {result.downloads_failed}")
-    
+    if result.downloads_failed > 0:
+        logger.console_info(f"✅ {result.downloads_completed} downloaded, {result.downloads_failed} failed")
+    else:
+        logger.console_info(f"✅ {result.downloads_completed} tracks downloaded")
+        
     if settings.lyrics.enabled:
         click.echo(f"   🎵 Lyrics: {result.lyrics_completed}")
         click.echo(f"   🚫 Lyrics failed: {result.lyrics_failed}")
@@ -438,7 +430,7 @@ def lyrics():
 
 @lyrics.command()
 @click.argument('playlist_url')
-@click.option('--source', type=click.Choice(['genius', 'musixmatch']), help='Lyrics source')
+@click.option('--source', type=click.Choice(['genius']), help='Lyrics source')
 @handle_error
 def download_lyrics(playlist_url, source):
     """Download lyrics for existing playlist"""
@@ -576,7 +568,7 @@ def show():
 @click.option('--format', type=click.Choice(['mp3', 'flac', 'm4a']), help='Set audio format')
 @click.option('--quality', type=click.Choice(['low', 'medium', 'high']), help='Set audio quality')
 @click.option('--output', type=click.Path(), help='Set output directory')
-@click.option('--lyrics-source', type=click.Choice(['genius', 'musixmatch']), help='Set primary lyrics source')
+@click.option('--lyrics-source', type=click.Choice(['genius']), help='Set primary lyrics source')
 @handle_error
 def set(format, quality, output, lyrics_source):
     """Update configuration settings"""

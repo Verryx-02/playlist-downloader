@@ -25,7 +25,7 @@ playlist-downloader/
 ## Next Steps
 
 1. **Implement Full Code**: Copy the complete implementation from the provided artifacts
-2. **Set Up APIs**: Configure Spotify, Genius, and Musixmatch API keys
+2. **Set Up APIs**: Configure Spotify and Genius API keys
 3. **Install Dependencies**: Run `pip install -r requirements.txt`
 4. **Test Installation**: Run `playlist-dl --help`
 

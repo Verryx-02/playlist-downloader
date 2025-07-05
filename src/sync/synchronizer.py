@@ -3,7 +3,6 @@ Playlist synchronization logic for incremental updates and change detection
 Handles sync operations between Spotify playlists and local downloads
 """
 
-import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Set
 from dataclasses import dataclass
@@ -19,7 +18,7 @@ from ..utils.helpers import (
     validate_and_create_directory
 )
 from ..spotify.client import get_spotify_client
-from ..spotify.models import SpotifyPlaylist, PlaylistTrack, TrackStatus, LyricsStatus, DownloadStats, LyricsSource
+from ..spotify.models import SpotifyPlaylist, PlaylistTrack, TrackStatus, LyricsStatus, LyricsSource
 from ..ytmusic.searcher import get_ytmusic_searcher
 from ..ytmusic.downloader import get_downloader
 from ..audio.metadata import get_metadata_manager
@@ -136,24 +135,17 @@ class PlaylistSynchronizer:
         try:
             # Check file exists
             if not file_path.exists():
-                self.logger.info(f"DEBUG VALIDATION FAIL: File doesn't exist - {file_path.name}")
                 return False
             
             # Check file size (must be larger than 100KB)
             file_size = file_path.stat().st_size
             if file_size < 100000:  # 100KB minimum
-                self.logger.info(f"DEBUG VALIDATION FAIL: File too small - {file_path.name} ({file_size} bytes)")
                 return False
-            else:
-                self.logger.info(f"DEBUG CHECK PASSED: File size OK - {file_path.name} ({file_size} bytes)")
             
             # Check file extension
             valid_extensions = ['.mp3', '.flac', '.m4a', '.aac', '.ogg', '.wav']
             if file_path.suffix.lower() not in valid_extensions:
-                self.logger.info(f"DEBUG VALIDATION FAIL: Invalid extension - {file_path.name}")
                 return False
-            else:
-                self.logger.info(f"DEBUG CHECK PASSED: Extension OK - {file_path.name}")
             
             # Basic file header check (just first few bytes)
             try:
@@ -179,11 +171,9 @@ class PlaylistSynchronizer:
                     if header.startswith(b'RIFF'):
                         return True
                     
-                    self.logger.info(f"DEBUG CHECK PASSED: Header validation passed - {file_path.name}")
                     return True
                     
             except Exception as e:
-                self.logger.info(f"DEBUG VALIDATION FAIL: Header check failed - {file_path.name}: {e}")
                 return True
             
         except Exception as e:
@@ -225,8 +215,6 @@ class PlaylistSynchronizer:
             if not audio_files:
                 self.logger.info("No existing audio files found")
                 return
-            
-            self.logger.info(f"Found {len(audio_files)} existing audio files")
             
             # Parse file names and match to tracks
             matched_files = {}
@@ -277,10 +265,8 @@ class PlaylistSynchronizer:
                     track.audio_status = TrackStatus.PENDING
                     track.lyrics_status = LyricsStatus.PENDING if self.sync_lyrics else LyricsStatus.SKIPPED
             
-            self.logger.info(
-                f"File scan complete: {files_matched} files matched, "
-                f"{files_validated} validated, {len(playlist.tracks) - files_validated} pending"
-            )
+            if files_validated > 0:
+                self.logger.console_info(f"📂 Found {files_validated} existing tracks")
             
         except Exception as e:
             self.logger.error(f"File scanning failed: {e}")
@@ -368,8 +354,6 @@ class PlaylistSynchronizer:
             # Look for source indicators
             if 'genius' in content_lower:
                 return LyricsSource.GENIUS
-            elif 'musixmatch' in content_lower:
-                return LyricsSource.MUSIXMATCH
             elif 'syncedlyrics' in content_lower:
                 return LyricsSource.SYNCEDLYRICS
             elif lyrics_file.suffix == '.lrc':
@@ -496,7 +480,6 @@ class PlaylistSynchronizer:
                 try:
                     if not any(duplicate.iterdir()):  # Directory is empty
                         duplicate.rmdir()
-                        self.logger.info(f"Removed empty duplicate directory: {duplicate}")
                 except Exception as e:
                     self.logger.warning(f"Could not remove duplicate directory {duplicate}: {e}")
                     
@@ -520,7 +503,6 @@ class PlaylistSynchronizer:
         if existing_matches:
             # Use the best match (first in sorted list)
             existing_path = existing_matches[0]
-            self.logger.info(f"Using existing playlist directory: {existing_path}")
             return existing_path
         
         # No existing directory found, create new one with clean name
@@ -528,7 +510,6 @@ class PlaylistSynchronizer:
         clean_name = sanitize_directory_name(playlist.name)
         playlist_path = self.output_directory / clean_name
         
-        self.logger.info(f"Creating new playlist directory: {playlist_path} (from name: '{playlist.name}')")
         
         # Handle duplicate names by adding suffix
         counter = 1
@@ -541,7 +522,6 @@ class PlaylistSynchronizer:
                 try:
                     metadata, _ = self.tracklist_manager.read_tracklist_file(tracklist)
                     if metadata.spotify_id == playlist.id:
-                        self.logger.info(f"Found existing playlist by ID verification: {playlist_path}")
                         return playlist_path
                 except Exception as e:
                     self.logger.warning(f"Could not verify existing playlist: {e}")
@@ -579,7 +559,6 @@ class PlaylistSynchronizer:
             if not success:
                 raise Exception(f"Failed to create playlist directory: {error_msg}")
         
-        self.logger.info(f"Created playlist directory: {validated_path}")
         return validated_path
 
 
@@ -600,8 +579,6 @@ class PlaylistSynchronizer:
             from ..utils.helpers import normalize_playlist_name_for_matching
             target_name = normalize_playlist_name_for_matching(playlist.name)
             
-            self.logger.info(f"Searching for existing playlist: '{playlist.name}' (normalized: '{target_name}')")
-            
             # Search all directories in output directory
             if self.output_directory.exists():
                 for directory in self.output_directory.iterdir():
@@ -615,7 +592,6 @@ class PlaylistSynchronizer:
                             metadata, _ = self.tracklist_manager.read_tracklist_file(tracklist_path)
                             if metadata.spotify_id == playlist.id:
                                 matches.append(directory)
-                                self.logger.info(f"Found existing playlist by Spotify ID: {directory}")
                                 continue
                         except Exception as e:
                             self.logger.debug(f"Could not read tracklist {tracklist_path}: {e}")
@@ -623,7 +599,6 @@ class PlaylistSynchronizer:
                     # Fallback: check by normalized directory name
                     dir_name = normalize_playlist_name_for_matching(directory.name)
                     if dir_name == target_name:
-                        self.logger.info(f"Found potential match by name: {directory}")
                         matches.append(directory)
             
             # Sort by preference: exact Spotify ID match first, then name matches
@@ -769,7 +744,6 @@ class PlaylistSynchronizer:
                 existing_files.extend(local_directory.glob(f"*{ext}"))
             
             if existing_files:
-                self.logger.info(f"Found {len(existing_files)} existing audio files, scanning...")
                 # Scan and match existing files to tracks
                 self._scan_existing_files(playlist, local_directory)
                 
@@ -880,7 +854,7 @@ class PlaylistSynchronizer:
         
         # Get new logger instance after reconfiguration
         operation_logger = OperationLogger(get_logger(__name__), f"Sync: {sync_plan.playlist_name}")
-        operation_logger.start(f"Executing {len(sync_plan.operations)} operations")
+        operation_logger.start()
         
         start_time = datetime.now()
         
@@ -970,8 +944,6 @@ class PlaylistSynchronizer:
             operations: Completed sync operations
         """
         try:
-            # DEBUG: Log before update
-            self.logger.info(f"DEBUG UPDATE STATES: {len(operations)} operations to apply")
         
             # Create a map of track operations by Spotify ID
             operation_map = {}
@@ -1006,8 +978,6 @@ class PlaylistSynchronizer:
                     )
             # DEBUG: Log after update  
             downloaded_count = sum(1 for t in playlist.tracks if t.audio_status == TrackStatus.DOWNLOADED)
-            self.logger.info(f"DEBUG AFTER UPDATE: {downloaded_count} tracks marked as downloaded")
-            self.logger.info(f"Updated states for {len(operation_map)} tracks in playlist")
             
         except Exception as e:
             self.logger.error(f"Failed to update playlist track states: {e}")
@@ -1096,7 +1066,6 @@ class PlaylistSynchronizer:
                     track.lyrics_status = LyricsStatus.PENDING if self.sync_lyrics else LyricsStatus.SKIPPED
             
             if validation_updates > 0:
-                self.logger.info(f"Validation found {validation_updates} tracks needing status correction")
                 
                 # Update tracklist with corrected statuses
                 self._create_or_update_tracklist(playlist, local_directory)
@@ -1116,14 +1085,10 @@ class PlaylistSynchronizer:
             local_directory: Local directory
         """
         try:
-            # DEBUG: Log track states before saving
-            downloaded_count = sum(1 for t in playlist.tracks if t.audio_status == TrackStatus.DOWNLOADED)
-            pending_count = sum(1 for t in playlist.tracks if t.audio_status == TrackStatus.PENDING)
-            self.logger.info(f"DEBUG TRACKLIST SAVE: {downloaded_count} downloaded, {pending_count} pending")
             
             # Log some example tracks
             for i, track in enumerate(playlist.tracks[:5]):  # First 5 tracks
-                self.logger.info(f"DEBUG TRACK {i+1}: {track.spotify_track.name} = {track.audio_status.value}")
+                self.logger.debug(f"DEBUG TRACK {i+1}: {track.spotify_track.name} = {track.audio_status.value}")
             
             # Check if tracklist exists
             tracklist_path = local_directory / "tracklist.txt"
@@ -1134,14 +1099,13 @@ class PlaylistSynchronizer:
                     tracklist_path,
                     playlist.tracks
                 )
-                self.logger.info(f"Updated tracklist: {tracklist_path}")
             else:
                 # Create new tracklist
                 created_path = self.tracklist_manager.create_tracklist_file(
                     playlist,
                     local_directory
                 )
-                self.logger.info(f"Created new tracklist: {created_path}")
+                self.logger.debug(f"Created new tracklist: {created_path}")
             
         except Exception as e:
             self.logger.error(f"Failed to create/update tracklist: {e}")
@@ -1290,16 +1254,11 @@ class PlaylistSynchronizer:
                     
                     if download_success:
                         result['completed'] += 1
-                        operation_logger.progress(
-                            f"Downloaded: {operation.track.spotify_track.primary_artist} - {operation.track.spotify_track.name}",
-                            completed + 1,
-                            len(operations)
-                        )
+                        operation_logger.progress("Downloading tracks", completed + 1, len(operations))
                     else:
                         result['failed'] += 1
-                        operation_logger.warning(
-                            f"Download failed: {operation.track.spotify_track.primary_artist} - {operation.track.spotify_track.name}: {message}"
-                        )
+                        # Dettagli tecnici solo nel file di log
+                        self.logger.warning(f"Download failed: {operation.track.spotify_track.primary_artist} - {operation.track.spotify_track.name}: {message}")
                     
                     if lyrics_success:
                         result['lyrics_completed'] += 1
@@ -1329,9 +1288,7 @@ class PlaylistSynchronizer:
                                 
                                 # Update tracklist file
                                 self._create_or_update_tracklist(current_playlist, local_directory)
-                                operation_logger.progress(
-                                    f"Batch update: tracklist updated after {self.download_counter} downloads"
-                                )
+                                self.logger.debug(f"Batch update: tracklist updated after {self.download_counter} downloads")
                             except Exception as e:
                                 operation_logger.warning(f"Batch tracklist update failed: {e}")
 
@@ -1405,18 +1362,14 @@ class PlaylistSynchronizer:
         Validate local audio file with appropriate level of checking
         """
         try:
-            # DEBUG: Start validation
-            self.logger.info(f"DEBUG VALIDATION START: {file_path.name}, rigorous={rigorous}")
             
             if rigorous:
                 # Rigorous validation for newly downloaded files
                 result = self._rigorous_file_validation(file_path)
-                self.logger.info(f"DEBUG RIGOROUS RESULT: {file_path.name} = {result}")
                 return result
             else:
                 # Permissive validation for existing files
                 result = self._simple_file_validation(file_path)
-                self.logger.info(f"DEBUG SIMPLE RESULT: {file_path.name} = {result}")
                 return result
         except Exception as e:
             self.logger.warning(f"File validation failed for {file_path}: {e}")

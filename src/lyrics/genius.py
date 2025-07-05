@@ -158,7 +158,7 @@ class GeniusLyricsProvider:
                 )
                 return lyrics
             else:
-                self.logger.warning(f"Failed to fetch lyrics from Genius for best match")
+                self.logger.debug(f"Failed to fetch lyrics from Genius for best match")
                 return None
                 
         except Exception as e:
@@ -204,7 +204,7 @@ class GeniusLyricsProvider:
                     break
                     
             except Exception as e:
-                self.logger.warning(f"Genius search query '{query}' failed: {e}")
+                self.logger.debug(f"Genius search query '{query}' failed: {e}")
                 continue
         
         return all_results[:self.max_search_results * 2]  # Limit total results
@@ -274,7 +274,7 @@ class GeniusLyricsProvider:
                 scored_results.append(genius_result)
                 
             except Exception as e:
-                self.logger.warning(f"Failed to score Genius result: {e}")
+                self.logger.debug(f"Failed to score Genius result: {e}")
                 continue
         
         # Sort by total score (highest first)
@@ -424,7 +424,7 @@ class GeniusLyricsProvider:
                 return None
                 
         except Exception as e:
-            self.logger.warning(f"Failed to fetch lyrics from Genius: {e}")
+            self.logger.debug(f"Failed to fetch lyrics from Genius: {e}")
             return None
     
     def get_song_info(self, song_id: int) -> Optional[Dict[str, Any]]:
@@ -508,7 +508,7 @@ class GeniusLyricsProvider:
         """
         try:
             if not self.api_key:
-                self.logger.warning("Genius API key not configured")
+                self.logger.debug("Genius API key not configured")
                 return False
             
             # Test API with a simple search
@@ -516,10 +516,10 @@ class GeniusLyricsProvider:
             test_response = self.genius_client.search_songs("test", per_page=1)
             
             if test_response:
-                self.logger.info("Genius API validation successful")
+                self.logger.debug("Genius API validation successful")
                 return True
             else:
-                self.logger.warning("Genius API test search failed")
+                self.logger.debug("Genius API test search failed")
                 return False
                 
         except Exception as e:

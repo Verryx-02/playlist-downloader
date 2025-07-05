@@ -5,7 +5,6 @@ A complete tool for downloading Spotify playlists with lyrics integration
 """
 
 from setuptools import setup, find_packages
-import os
 
 # Read README for long description
 with open("README.md", "r", encoding="utf-8") as fh:
@@ -66,7 +65,6 @@ setup(
             "tensorflow>=2.13.0",  # Future AI features
         ],
         "extra-lyrics": [
-            "musixmatch>=0.8",
             "syncedlyrics>=0.4.0",
         ],
         "dev": [
@@ -79,7 +77,6 @@ setup(
         "all": [
             "librosa>=0.10.1",
             "tensorflow>=2.13.0", 
-            "musixmatch>=0.8",
             "syncedlyrics>=0.4.0",
         ]
     },

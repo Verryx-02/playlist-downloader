@@ -173,7 +173,7 @@ class MetadataManager:
             # Save changes
             audio.save(v2_version=4 if self.id3_version == "2.4" else 3)
             
-            self.logger.debug(f"MP3 metadata embedded successfully: {Path(file_path).name}")
+            self.logger.debug(f"MP3 metadata embedded: {Path(file_path).name}")
             return True
             
         except Exception as e:
@@ -250,7 +250,7 @@ class MetadataManager:
             # Save changes
             audio.save()
             
-            self.logger.debug(f"FLAC metadata embedded successfully: {Path(file_path).name}")
+            self.logger.debug(f"FLAC metadata embedded: {Path(file_path).name}")
             return True
             
         except Exception as e:
@@ -315,7 +315,7 @@ class MetadataManager:
             # Save changes
             audio.save()
             
-            self.logger.debug(f"MP4 metadata embedded successfully: {Path(file_path).name}")
+            self.logger.debug(f"MP4 metadata embedded: {Path(file_path).name}")
             return True
             
         except Exception as e:

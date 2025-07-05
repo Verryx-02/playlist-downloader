@@ -11,7 +11,7 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
 - **Multi-Format Support**: MP3, FLAC, and M4A output formats
 
 ### 🎤 **Lyrics Integration**
-- **Multi-Source Lyrics**: Primary support for Genius API with Musixmatch fallback
+- **Multi-Source Lyrics**: Primary support for Genius API
 - **Automatic Embedding**: Lyrics embedded directly in audio file metadata
 - **Separate Files**: Optional .lrc (synchronized) and .txt (plain) lyrics files
 - **Smart Matching**: Intelligent lyrics search with quality validation
@@ -83,7 +83,6 @@ SPOTIFY_CLIENT_SECRET=your_client_secret
 3. **Optional: Configure Lyrics APIs**:
 ```bash
 export GENIUS_API_KEY="your_genius_api_key"
-export MUSIXMATCH_API_KEY="your_musixmatch_api_key"
 ```
 
 ### First Run
@@ -195,7 +194,6 @@ lyrics:
   embed_in_audio: true
   format: "lrc"
   primary_source: "genius"
-  fallback_sources: ["musixmatch"]
   clean_lyrics: true
 
 audio:
@@ -217,7 +215,6 @@ sync:
 | `SPOTIFY_CLIENT_ID` | Spotify App Client ID | Yes |
 | `SPOTIFY_CLIENT_SECRET` | Spotify App Client Secret | Yes |
 | `GENIUS_API_KEY` | Genius API Token | Optional |
-| `MUSIXMATCH_API_KEY` | Musixmatch API Key | Optional |
 | `DOWNLOAD_OUTPUT_DIR` | Default output directory | Optional |
 
 ## 📁 File Organization
@@ -269,11 +266,6 @@ The `tracklist.txt` file tracks sync status:
 - Free tier: 60 requests/hour
 - Best for English content
 
-### Musixmatch API (Fallback)
-
-1. Go to [Musixmatch Developer](https://developer.musixmatch.com/)
-2. Register and get API key
-3. Set environment variable: `MUSIXMATCH_API_KEY=your_key`
 
 **Features:**
 - Official Spotify partner
@@ -391,7 +383,7 @@ playlist-dl download "PLAYLIST_URL" --verbose
 |-------|----------|
 | `Spotify client_id and client_secret are required` | Set environment variables or config |
 | `YouTube Music API validation failed` | Check internet connection |
-| `No lyrics sources are configured` | Set up Genius or Musixmatch API keys |
+| `No lyrics sources are configured` | Set up Genius API keys |
 | `Permission denied writing to output directory` | Check directory permissions |
 
 ### Debug Mode
@@ -470,7 +462,6 @@ The developers are not responsible for any misuse of this software.
 - **Spotify** - For the Web API that makes playlist access possible
 - **YouTube Music** - For providing high-quality audio content
 - **Genius** - For comprehensive lyrics database
-- **Musixmatch** - For synchronized lyrics support
 - **Open Source Libraries** - spotipy, yt-dlp, mutagen, and many others
 
 ## 📞 Support

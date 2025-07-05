@@ -141,7 +141,7 @@ class AudioProcessor:
                 if temp_path != output_path:
                     shutil.move(temp_path, output_path)
                 
-                self.logger.info(f"Audio processing completed: {input_file.name}")
+                self.logger.debug(f"Audio processing completed: {input_file.name}")
                 return True
                 
             finally:
@@ -197,10 +197,7 @@ class AudioProcessor:
                 # Export trimmed audio
                 trimmed_audio.export(file_path, format=Path(file_path).suffix[1:])
                 
-                self.logger.debug(
-                    f"Silence trimmed: {trimmed_amount:.1f}s removed "
-                    f"({format_duration(original_duration)} → {format_duration(trimmed_duration)})"
-                )
+                self.logger.debug(f"Silence trimmed: {trimmed_amount:.1f}s removed ({format_duration(original_duration)} → {format_duration(trimmed_duration)})")
             else:
                 self.logger.debug("No significant silence to trim")
             

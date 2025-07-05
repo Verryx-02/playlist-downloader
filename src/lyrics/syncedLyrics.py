@@ -96,7 +96,7 @@ class SyncedLyricsProvider:
                         cleaned_lyrics = clean_lyrics_text(lyrics)
                         
                         if validate_lyrics_content(cleaned_lyrics, self.settings.lyrics.min_length):
-                            self.logger.info(f"SyncedLyrics lyrics found for: {artist} - {title}")
+                            self.logger.debug(f"SyncedLyrics lyrics found for: {artist} - {title}")
                             return cleaned_lyrics
                         else:
                             self.logger.debug(f"SyncedLyrics lyrics validation failed for: {query}")
@@ -104,10 +104,10 @@ class SyncedLyricsProvider:
                         self.logger.debug(f"No SyncedLyrics results for: {query}")
                         
                 except Exception as e:
-                    self.logger.warning(f"SyncedLyrics search failed for '{query}': {e}")
+                    self.logger.debug(f"SyncedLyrics search failed for '{query}': {e}")
                     continue
             
-            self.logger.info(f"No SyncedLyrics results found for: {artist} - {title}")
+            self.logger.debug(f"No SyncedLyrics results found for: {artist} - {title}")
             return None
             
         except Exception as e:

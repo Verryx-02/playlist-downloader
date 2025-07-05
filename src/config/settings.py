@@ -66,13 +66,12 @@ class LyricsConfig:
     embed_in_audio: bool = True
     format: str = "lrc"  # lrc, txt, both
     primary_source: str = "genius"
-    fallback_sources: list = field(default_factory=lambda: ["musixmatch", "syncedlyrics"])
+    fallback_sources: list = field(default_factory=lambda: ["syncedlyrics"])
     clean_lyrics: bool = True
     min_length: int = 50
     timeout: int = 30
     max_attempts: int = 3
     genius_api_key: str = ""
-    musixmatch_api_key: str = ""
     similarity_threshold: float = 0.7
     exclude_instrumental: bool = True
     include_translations: bool = False
@@ -232,7 +231,6 @@ class Settings:
             'SPOTIFY_CLIENT_SECRET': lambda v: setattr(self.spotify, 'client_secret', v),
             'SPOTIFY_REDIRECT_URL': lambda v: setattr(self.spotify, 'redirect_url', v),
             'GENIUS_API_KEY': lambda v: setattr(self.lyrics, 'genius_api_key', v),
-            'MUSIXMATCH_API_KEY': lambda v: setattr(self.lyrics, 'musixmatch_api_key', v),
             'DOWNLOAD_OUTPUT_DIR': lambda v: setattr(self.download, 'output_directory', v),
         }
         
@@ -297,7 +295,6 @@ class Settings:
         config_data['spotify']['client_id'] = ""
         config_data['spotify']['client_secret'] = ""
         config_data['lyrics']['genius_api_key'] = ""
-        config_data['lyrics']['musixmatch_api_key'] = ""
         
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -339,7 +336,7 @@ class Settings:
             errors.append(f"Invalid lyrics format: {self.lyrics.format}")
         
         # Validate lyrics source
-        valid_sources = ['genius', 'musixmatch', 'syncedlyrics']
+        valid_sources = ['genius','syncedlyrics']
         if self.lyrics.primary_source not in valid_sources:
             errors.append(f"Invalid primary lyrics source: {self.lyrics.primary_source}")
         
