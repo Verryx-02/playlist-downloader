@@ -95,7 +95,7 @@ class PlaylistSynchronizer:
     def __init__(self):
         """Initialize playlist synchronizer"""
         self.settings = get_settings()
-        self.settings = get_settings()
+        self.logger = get_logger(__name__)
         self.spotify_client = get_spotify_client()
         self.ytmusic_searcher = get_ytmusic_searcher()
         self.downloader = get_downloader()

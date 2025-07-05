@@ -6,6 +6,9 @@ Fast and reliable lyrics source without API requirements
 import time
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
+import sys
+import io
+from contextlib import redirect_stderr
 
 from ..config.settings import get_settings
 from ..utils.logger import get_logger
@@ -21,10 +24,19 @@ from ..spotify.models import LyricsSource
 # Import syncedlyrics with error handling and configuration
 try:
     import os
+    import sys
+    import logging
     
     # Set environment variables to reduce verbosity BEFORE importing
     os.environ['SYNCEDLYRICS_VERBOSE'] = '0'
     os.environ['MUSIXMATCH_VERBOSE'] = '0'
+    # Disable Musixmatch logger
+    logging.getLogger('Musixmatch').setLevel(logging.CRITICAL)
+    logging.getLogger('Musixmatch').disabled = True
+    
+    # Redirect stderr to suppress Musixmatch output
+    from contextlib import redirect_stderr
+    import io
     
     import syncedlyrics
     
@@ -218,7 +230,9 @@ class SyncedLyricsProvider:
             query = f"{norm_artist} {norm_title}"
             
             # Search for synced lyrics
-            synced_lyrics = syncedlyrics.search(query, synced_only=True)
+            # Search for synced lyrics (suppress Musixmatch output)
+            with redirect_stderr(io.StringIO()):
+                synced_lyrics = syncedlyrics.search(query, synced_only=True)
             
             if synced_lyrics and '[' in synced_lyrics and ']' in synced_lyrics:
                 self.logger.info(f"Synced lyrics found for: {artist} - {title}")
