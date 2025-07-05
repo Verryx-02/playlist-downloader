@@ -1,40 +1,40 @@
-# 🎵 Playlist-Downloader
+# Playlist-Downloader
 
 A comprehensive tool for downloading Spotify playlists locally with YouTube Music integration and automatic lyrics support.
 
 ## ✨ Features
 
-### 🎵 **Core Functionality**
+### **Core Functionality**
 - **Complete Playlist Downloads**: Download entire Spotify playlists with metadata
 - **High-Quality Audio**: Best available audio quality from YouTube Music (up to 256kbps AAC)
 - **Intelligent Matching**: Advanced algorithm for finding the best YouTube Music matches
 - **Multi-Format Support**: MP3, FLAC, and M4A output formats
 
-### 🎤 **Lyrics Integration**
+### **Lyrics Integration**
 - **Multi-Source Lyrics**: Primary support for Genius API
 - **Automatic Embedding**: Lyrics embedded directly in audio file metadata
 - **Separate Files**: Optional .lrc (synchronized) and .txt (plain) lyrics files
 - **Smart Matching**: Intelligent lyrics search with quality validation
 
-### 🔄 **Synchronization**
+### **Synchronization**
 - **Incremental Updates**: Only download new/changed tracks
 - **Smart Reordering**: Detect and handle moved tracks
 - **Status Tracking**: Detailed tracklist.txt files for sync state
 - **Resume Capability**: Resume interrupted downloads
 
-### 🎧 **Audio Processing**
+### **Audio Processing**
 - **Silence Trimming**: Automatic removal of silence from start/end
 - **Audio Normalization**: EBU R128 loudness normalization
 - **Quality Control**: Audio validation and integrity checking
 - **Metadata Enhancement**: Complete ID3 tags with album artwork
 
-### 🛠️ **Advanced Features**
+### **Advanced Features**
 - **Parallel Downloads**: Configurable concurrent download limits
 - **Rate Limiting**: Respectful API usage with automatic rate limiting
 - **Error Recovery**: Smart retry logic with exponential backoff
 - **Cross-Platform**: Works on Windows, macOS, and Linux
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -233,7 +233,7 @@ The `tracklist.txt` file tracks sync status:
 - Audio: ✅=Downloaded, ⏳=Pending, ❌=Failed, ⏭️=Skipped
 - Lyrics: 🎵=Downloaded, 🚫=Not Found, 🎼=Instrumental, ⏳=Pending
 
-## 🎤 Lyrics Setup
+## Lyrics Setup
 
 ### Genius API (Recommended)
 
@@ -247,7 +247,7 @@ The `tracklist.txt` file tracks sync status:
 - Free tier: 60 requests/hour
 - Best for English content
 
-## 🛠️ Advanced Usage
+## Advanced Usage
 
 ### Batch Processing
 
@@ -312,7 +312,7 @@ crontab -e
 | M4A/AAC | Lossy | Better | Medium | High |
 | FLAC | Lossless | Perfect | Large | Medium |
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
