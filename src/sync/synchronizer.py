@@ -862,8 +862,9 @@ class PlaylistSynchronizer:
         Returns:
             SyncResult with operation results
         """
-        updated_playlist = self.spotify_client.get_full_playlist(sync_plan.playlist_id)
-        self._setup_playlist_logging(updated_playlist, local_directory)
+        # Get playlist and preserve it for final tracklist update
+        original_playlist = self.spotify_client.get_full_playlist(sync_plan.playlist_id)
+        self._setup_playlist_logging(original_playlist, local_directory)
 
         if not sync_plan.has_changes:
             return SyncResult(
@@ -877,10 +878,6 @@ class PlaylistSynchronizer:
                 reordering_performed=False
             )
         
-        # Setup logging for this specific playlist
-        updated_playlist = self.spotify_client.get_full_playlist(sync_plan.playlist_id)
-        self._setup_playlist_logging(updated_playlist, local_directory)
-
         # Get new logger instance after reconfiguration
         operation_logger = OperationLogger(get_logger(__name__), f"Sync: {sync_plan.playlist_name}")
         operation_logger.start(f"Executing {len(sync_plan.operations)} operations")
@@ -901,10 +898,10 @@ class PlaylistSynchronizer:
             )
 
             # Validate existing tracklist and update track states
-            self._validate_existing_tracklist(updated_playlist, local_directory)
+            self._validate_existing_tracklist(original_playlist, local_directory)
 
             # Create initial tracklist if doesn't exist or update with validated states
-            self._create_or_update_tracklist(updated_playlist, local_directory)
+            self._create_or_update_tracklist(original_playlist, local_directory)
             operation_logger.progress("Initial tracklist created/validated")
 
             # Reset download counter for batch updates
@@ -934,14 +931,13 @@ class PlaylistSynchronizer:
             result.operations_performed = len(sync_plan.operations)
             result.total_time = (datetime.now() - start_time).total_seconds()
             
-            # Get updated playlist with current track states
-            updated_playlist = self.spotify_client.get_full_playlist(sync_plan.playlist_id)
-            
             # Update the playlist tracks with the states from sync operations
-            self._update_playlist_track_states(updated_playlist, sync_plan.operations)
+            # DON'T reload from Spotify - preserve existing states
+            self._update_playlist_track_states(original_playlist, sync_plan.operations)
             
             # Create or update tracklist file with updated states
-            self._create_or_update_tracklist(updated_playlist, local_directory)
+            self._create_or_update_tracklist(original_playlist, local_directory)
+            
             operation_logger.complete(result.summary)
             return result
         
@@ -974,6 +970,9 @@ class PlaylistSynchronizer:
             operations: Completed sync operations
         """
         try:
+            # DEBUG: Log before update
+            self.logger.info(f"DEBUG UPDATE STATES: {len(operations)} operations to apply")
+        
             # Create a map of track operations by Spotify ID
             operation_map = {}
             for operation in operations:
@@ -1005,7 +1004,9 @@ class PlaylistSynchronizer:
                         f"Audio: {playlist_track.audio_status.value}, "
                         f"Lyrics: {playlist_track.lyrics_status.value}"
                     )
-            
+            # DEBUG: Log after update  
+            downloaded_count = sum(1 for t in playlist.tracks if t.audio_status == TrackStatus.DOWNLOADED)
+            self.logger.info(f"DEBUG AFTER UPDATE: {downloaded_count} tracks marked as downloaded")
             self.logger.info(f"Updated states for {len(operation_map)} tracks in playlist")
             
         except Exception as e:
@@ -1115,6 +1116,15 @@ class PlaylistSynchronizer:
             local_directory: Local directory
         """
         try:
+            # DEBUG: Log track states before saving
+            downloaded_count = sum(1 for t in playlist.tracks if t.audio_status == TrackStatus.DOWNLOADED)
+            pending_count = sum(1 for t in playlist.tracks if t.audio_status == TrackStatus.PENDING)
+            self.logger.info(f"DEBUG TRACKLIST SAVE: {downloaded_count} downloaded, {pending_count} pending")
+            
+            # Log some example tracks
+            for i, track in enumerate(playlist.tracks[:5]):  # First 5 tracks
+                self.logger.info(f"DEBUG TRACK {i+1}: {track.spotify_track.name} = {track.audio_status.value}")
+            
             # Check if tracklist exists
             tracklist_path = local_directory / "tracklist.txt"
             
