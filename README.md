@@ -1,8 +1,11 @@
 # Playlist-Downloader
-
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+  
 A comprehensive tool for downloading Spotify playlists locally with YouTube Music integration and automatic lyrics support.
 
-## ✨ Features
+---
+
+## Features
 
 ### **Core Functionality**
 - **Complete Playlist Downloads**: Download entire Spotify playlists with metadata
@@ -33,6 +36,8 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
 - **Rate Limiting**: Respectful API usage with automatic rate limiting
 - **Error Recovery**: Smart retry logic with exponential backoff
 - **Cross-Platform**: Works on Windows, macOS, and Linux
+
+---
 
 ## Quick Start
 
@@ -114,6 +119,8 @@ To get the playlist URL go to the playlist you want to download and click on "Sh
 playlist-dl download "PLAYLIST_URL"
 ```
 
+---
+
 
 ## 📖 Usage Guide
 
@@ -188,7 +195,9 @@ playlist-dl auth status
 playlist-dl auth logout
 ```
 
-## ⚙️ Configuration
+---
+
+## Configuration
 
 ### Configuration File
 
@@ -200,7 +209,9 @@ spotify:
   client_secret: "YOUR CLIENT SECRET"
 ```
 
-## 📁 File Organization
+---
+
+## File Organization
 
 ```
 ~/Music/Playlist Downloads/
@@ -233,6 +244,8 @@ The `tracklist.txt` file tracks sync status:
 - Audio: ✅=Downloaded, ⏳=Pending, ❌=Failed, ⏭️=Skipped
 - Lyrics: 🎵=Downloaded, 🚫=Not Found, 🎼=Instrumental, ⏳=Pending
 
+---
+
 ## Lyrics Setup
 
 ### Genius API (Recommended)
@@ -246,6 +259,8 @@ The `tracklist.txt` file tracks sync status:
 - Large database with high accuracy
 - Free tier: 60 requests/hour
 - Best for English content
+
+---
 
 ## Advanced Usage
 
@@ -312,6 +327,8 @@ crontab -e
 | M4A/AAC | Lossy | Better | Medium | High |
 | FLAC | Lossless | Perfect | Large | Medium |
 
+---
+
 ## Troubleshooting
 
 ### Common Issues
@@ -354,6 +371,8 @@ playlist-dl download "PLAYLIST_URL" --verbose
 For other issues check the log files. One is created for each playlist:
 
 
+---
+
 ## Contributing
 
 ### Development Setup
@@ -384,9 +403,13 @@ src/
 2. **Audio Format**: Extend `src/audio/processor.py`
 3. **CLI Commands**: Add to `src/main.py`
 
+---
+
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
 
 ## ⚠️ Legal Notice
 
@@ -399,6 +422,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 The developers are not responsible for any misuse of this software.
 
+---
+
 ## Acknowledgments
 
 - **Spotify** - For the Web API that makes playlist access possible
@@ -406,11 +431,15 @@ The developers are not responsible for any misuse of this software.
 - **Genius** - For comprehensive lyrics database
 - **Open Source Libraries** - spotipy, yt-dlp, mutagen, and many others
 
+---
+
 ## Support
 
 - **Documentation**: Check this README and inline help (`playlist-dl --help`)
 - **Issues**: Report bugs on [GitHub Issues](https://github.com/playlist-downloader/playlist-downloader/issues)
 - **Discussions**: Join conversations on [GitHub Discussions](https://github.com/playlist-downloader/playlist-downloader/discussions)
+
+---
 
 ## 🗺️ Roadmap
 
