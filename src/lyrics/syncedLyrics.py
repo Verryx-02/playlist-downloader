@@ -101,17 +101,16 @@ class SyncedLyricsProvider:
                 """Safely suppress output and always restore streams"""
                 old_stdout = sys.stdout
                 old_stderr = sys.stderr
+                devnull = open(os.devnull, 'w')
                 
                 try:
-                    # Redirect to devnull instead of closing streams
-                    with open(os.devnull, 'w') as devnull:
-                        sys.stdout = devnull
-                        sys.stderr = devnull
-                        yield
+                    sys.stdout = devnull
+                    sys.stderr = devnull
+                    yield
                 finally:
-                    # Always restore original streams
                     sys.stdout = old_stdout
                     sys.stderr = old_stderr
+                    devnull.close()
             
             # Search with safe output suppression
             with suppress_output():

@@ -281,6 +281,9 @@ def download(playlist_url, output, format, quality, no_lyrics, lyrics_source, co
         click.echo(f"   ⏱️ Total time: {format_duration(result.total_time)}")
     
     click.echo(f"\n📁 Files saved to: {local_directory}")
+    # Force flush output streams
+    sys.stdout.flush()
+    sys.stderr.flush()
 
 
 @cli.command()

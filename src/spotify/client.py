@@ -58,8 +58,8 @@ class SpotifyClient:
             return func(*args, **kwargs)
         except SpotifyException as e:
             if e.http_status == 401:
-                # Token expired, try to refresh
-                self.logger.warning("Spotify token expired, attempting refresh...")
+                # Token expired, try to refresh (no warning to console)
+                self.logger.debug("Spotify token expired, attempting refresh...")
                 self._client = self.auth.get_spotify_client()
                 if self._client:
                     self._rate_limit()

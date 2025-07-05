@@ -173,7 +173,8 @@ def setup_logging(
     
     # Disable all external library logging more aggressively
     external_libs = [
-        'spotipy', 'urllib3', 'requests', 'yt_dlp', 'ytmusicapi',
+        'spotipy', 'spotipy.client', 'spotipy.oauth2',
+        'urllib3', 'requests', 'yt_dlp', 'ytmusicapi',
         'syncedlyrics', 'musixmatch', 'megalobiz', 'httpx', 'httpcore',
         'urllib3.connectionpool', 'requests.packages.urllib3.connectionpool'
     ]
@@ -264,7 +265,8 @@ def reconfigure_logging_for_playlist(
         
         # Disable all external library logging more aggressively
         external_libs = [
-            'spotipy', 'urllib3', 'requests', 'yt_dlp', 'ytmusicapi',
+            'spotipy', 'spotipy.client', 'spotipy.oauth2',
+            'urllib3', 'requests', 'yt_dlp', 'ytmusicapi',
             'syncedlyrics', 'musixmatch', 'megalobiz', 'httpx', 'httpcore',
             'urllib3.connectionpool', 'requests.packages.urllib3.connectionpool'
         ]
