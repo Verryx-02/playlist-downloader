@@ -50,12 +50,23 @@ git clone https://github.com/playlist-downloader/playlist-downloader.git
 cd playlist-downloader
 ```
 
-2. **Install dependencies**:
+2.	**Create and activate a virtual environment (recommended)**:
+```bash
+python -m venv .venv
+
+# On Linux/macOS:
+source .venv/bin/activate
+
+# On Windows:
+.venv\Scripts\activate
+```
+
+3. **Install dependencies**:
 ```bash
 pip install -r requirements.txt
 ```
 
-3. **Install the package**:
+4. **Install the package**:
 ```bash
 pip install -e .
 ```
@@ -486,15 +497,11 @@ The developers are not responsible for any misuse of this software.
 ### Version History
 
 - **v1.0.0** (Current): Initial release with core functionality
-- **v0.9.0**: Beta with lyrics integration
-- **v0.8.0**: Alpha with basic download capabilities
 
 ---
 
 <div align="center">
 
 **🎵 Happy Downloading! 🎵**
-
-*Made with ❤️ for music lovers everywhere*
 
 </div>
