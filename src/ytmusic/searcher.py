@@ -354,7 +354,7 @@ class YouTubeMusicSearcher:
         album: Optional[str] = None
     ) -> List[SearchResult]:
         """
-        Search for a track using multiple strategies
+        Search for a track using cascading strategies
         
         Args:
             artist: Artist name
@@ -365,79 +365,107 @@ class YouTubeMusicSearcher:
         Returns:
             List of SearchResult objects sorted by score
         """
-        self.logger.info(f"Searching for: {artist} - {title}")
+        # First attempt: strict search
+        results = self._search_with_threshold(artist, title, duration, album, threshold=70.0, strict_queries=True)
         
-        all_results = []
-        seen_video_ids: Set[str] = set()
+        if results:
+            self.logger.info(f"Found with strict search: {artist} - {title}")
+            return results
         
-        # Generate search queries
-        search_queries = create_search_query(
-            artist, 
-            title, 
-            include_official=self.prefer_official
-        )
+        # Second attempt: permissive search
+        self.logger.info(f"Strict search failed, trying permissive for: {artist} - {title}")
+        results = self._search_with_threshold(artist, title, duration, album, threshold=50.0, strict_queries=False)
         
-        # Add album context if available
-        if album and album.lower() not in title.lower():
-            album_query = f"{normalize_artist_name(artist)} {normalize_track_title(title)} {album}"
-            search_queries.insert(1, album_query)
-        
-        # Execute searches
-        for i, query in enumerate(search_queries):
-            try:
-                self.logger.debug(f"Executing search {i+1}/{len(search_queries)}: '{query}'")
-                
-                # Perform search
-                raw_results = self._search_ytmusic(query, limit=self.max_results)
-                
-                # Process results
-                for raw_result in raw_results:
-                    video_id = raw_result.get('videoId')
-                    if not video_id or video_id in seen_video_ids:
-                        continue
-                    
-                    seen_video_ids.add(video_id)
-                    
-                    # Extract metadata
-                    search_result = self._extract_result_metadata(raw_result)
-                    
-                    # Calculate scores
-                    self._calculate_scores(search_result, artist, title, duration)
-                    
-                    # Apply score threshold
-                    if search_result.total_score >= self.score_threshold:
-                        all_results.append(search_result)
-                        
-                        self.logger.debug(
-                            f"Found candidate: {search_result.artist} - {search_result.title} "
-                            f"(Score: {search_result.total_score:.1f})"
-                        )
-                
-                # Early exit if we found high-quality matches
-                high_quality_results = [r for r in all_results if r.total_score >= 85]
-                if len(high_quality_results) >= 3:
-                    self.logger.debug("Found sufficient high-quality matches, stopping search")
-                    break
-                    
-            except Exception as e:
-                self.logger.warning(f"Search query '{query}' failed: {e}")
-                continue
-        
-        # Sort by score (highest first)
-        all_results.sort(key=lambda x: x.total_score, reverse=True)
-        
-        # Log search summary
-        if all_results:
-            best_result = all_results[0]
-            self.logger.info(
-                f"Search completed: {len(all_results)} results, "
-                f"best match: {best_result.artist} - {best_result.title} "
-                f"(Score: {best_result.total_score:.1f})"
-            )
+        if results:
+            self.logger.info(f"Found with permissive search: {artist} - {title}")
         else:
-            self.logger.warning(f"No matches found for: {artist} - {title}")
+            self.logger.warning(f"Both searches failed for: {artist} - {title}")
         
-        return all_results
+        return results
+
+    def _search_with_threshold(
+        self,
+        artist: str, 
+        title: str, 
+        duration: Optional[int] = None,
+        album: Optional[str] = None,
+        threshold: float = 70.0,
+        strict_queries: bool = True
+    ) -> List[SearchResult]:
+        """Internal search with specific threshold and query strategy"""
+        
+        # Temporarily change threshold
+        original_threshold = self.score_threshold
+        self.score_threshold = threshold
+        
+        try:
+            all_results = []
+            seen_video_ids: Set[str] = set()
+            
+            # Generate search queries based on strictness
+            if strict_queries:
+                search_queries = create_search_query(artist, title, include_official=self.prefer_official)
+            else:
+                # More permissive queries for fallback
+                search_queries = create_search_query(artist, title, include_official=True)
+                # Add simple concatenated query
+                search_queries.append(f"{artist.strip()} {title.strip()}")
+            
+            # Add album context if available
+            if album and album.lower() not in title.lower():
+                album_query = f"{normalize_artist_name(artist)} {normalize_track_title(title)} {album}"
+                search_queries.insert(1, album_query)
+            
+            # Execute searches
+            for i, query in enumerate(search_queries):
+                try:
+                    self.logger.debug(f"Search attempt {i+1}/{len(search_queries)} (threshold={threshold}): '{query}'")
+                    
+                    # Perform search
+                    raw_results = self._search_ytmusic(query, limit=self.max_results)
+                    
+                    # Process results
+                    for raw_result in raw_results:
+                        video_id = raw_result.get('videoId')
+                        if not video_id or video_id in seen_video_ids:
+                            continue
+                        
+                        seen_video_ids.add(video_id)
+                        
+                        # Extract metadata
+                        search_result = self._extract_result_metadata(raw_result)
+                        
+                        # Calculate scores
+                        self._calculate_scores(search_result, artist, title, duration)
+                        
+                        # Apply score threshold
+                        if search_result.total_score >= self.score_threshold:
+                            all_results.append(search_result)
+                            
+                            self.logger.debug(
+                                f"Found candidate: {search_result.artist} - {search_result.title} "
+                                f"(Score: {search_result.total_score:.1f})"
+                            )
+                    
+                    # Early exit if we found high-quality matches (only for strict search)
+                    if strict_queries:
+                        high_quality_results = [r for r in all_results if r.total_score >= 85]
+                        if len(high_quality_results) >= 3:
+                            self.logger.debug("Found sufficient high-quality matches, stopping search")
+                            break
+                            
+                except Exception as e:
+                    self.logger.warning(f"Search query '{query}' failed: {e}")
+                    continue
+            
+            # Sort by score (highest first)
+            all_results.sort(key=lambda x: x.total_score, reverse=True)
+            
+            return all_results
+            
+        finally:
+            # Restore original threshold
+            self.score_threshold = original_threshold
     
     def get_best_match(
         self, 

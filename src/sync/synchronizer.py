@@ -710,16 +710,26 @@ class PlaylistSynchronizer:
                 # Find corresponding track
                 track = next(t for t in playlist.tracks if t.spotify_track.id == entry.spotify_id)
                 
-                # Check if file exists and is valid
+               # Check if track needs download
+                needs_download = False
+                
                 if entry.local_file_path:
+                    # Has file path but file missing/invalid
                     file_path = local_directory / entry.local_file_path
                     if not file_path.exists() or not self._validate_local_file(file_path, rigorous=False):
-                        operation = SyncOperation(
-                            operation_type='download',
-                            track=track,
-                            reason='file_missing_or_invalid'
-                        )
-                        operations.append(operation)
+                        needs_download = True
+                elif entry.audio_status.value == 'pending':
+                    # No file path and still pending
+                    needs_download = True
+                    
+                if needs_download:
+                    operation = SyncOperation(
+                        operation_type='download',
+                        track=track,
+                        reason='file_missing_or_invalid'
+                    )
+                    operations.append(operation)
+                
                 
                 # Check lyrics if enabled
                 if self.sync_lyrics and entry.lyrics_status != LyricsStatus.DOWNLOADED:
@@ -1207,6 +1217,8 @@ class PlaylistSynchronizer:
                 if download_result.file_path:
                     self.audio_processor.process_audio_file(download_result.file_path)
                 
+                lyrics_result = None
+
                 # Download lyrics if enabled
                 lyrics_success = False
                 if self.sync_lyrics:
