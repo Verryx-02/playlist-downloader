@@ -690,8 +690,8 @@ class PlaylistSynchronizer:
             
             # Execute download operations
             if download_operations:
-                download_result = self._execute_download_operations(
-                    download_operations, local_directory, operation_logger, sync_plan.playlist_id
+                download_result = self._execute_download_operations_virtual(
+                    download_operations, local_directory, operation_logger, virtual_playlist
                 )
                 result.downloads_completed += download_result['completed']
                 result.downloads_failed += download_result['failed']
@@ -1584,6 +1584,192 @@ class PlaylistSynchronizer:
                                 
                                 # Update tracklist file
                                 self._create_or_update_tracklist(current_playlist, local_directory)
+                                self.logger.debug(f"Batch update: tracklist updated after {self.download_counter} downloads")
+                            except Exception as e:
+                                operation_logger.warning(f"Batch tracklist update failed: {e}")
+
+                except Exception as e:
+                    result['failed'] += 1
+                    operation_logger.error(f"Download execution error: {e}")
+                    completed += 1
+                    operation.track.audio_status = TrackStatus.FAILED
+                    operation.track.lyrics_status = LyricsStatus.FAILED if self.sync_lyrics else LyricsStatus.SKIPPED
+        
+        return result
+    
+    def _execute_download_operations_virtual(
+        self, 
+        operations: List[SyncOperation],
+        local_directory: Path,
+        operation_logger: OperationLogger,
+        virtual_playlist: SpotifyPlaylist
+    ) -> Dict[str, int]:
+        """
+        Execute download operations for virtual playlist (no Spotify API refetch)
+        
+        Args:
+            operations: Download operations to execute
+            local_directory: Local directory
+            operation_logger: Operation logger
+            virtual_playlist: Virtual playlist (no refetch needed)
+            
+        Returns:
+            Dictionary with completion stats
+        """
+        result = {
+            'completed': 0,
+            'failed': 0,
+            'lyrics_completed': 0,
+            'lyrics_failed': 0
+        }
+        
+        def download_single_track(operation: SyncOperation) -> Tuple[bool, bool, str]:
+            """Download single track with lyrics"""
+            try:
+                track = operation.track
+                
+                # Search for track on YouTube Music
+                search_result = self.ytmusic_searcher.get_best_match(
+                    track.spotify_track.primary_artist,
+                    track.spotify_track.name,
+                    track.spotify_track.duration_ms // 1000,
+                    track.spotify_track.album.name
+                )
+                
+                if not search_result:
+                    return False, False, "No YouTube Music match found"
+                
+                # Generate output filename
+                filename = self._generate_track_filename(track)
+                output_path = local_directory / filename
+                
+                # Download audio
+                download_result = self.downloader.download_audio(
+                    search_result.video_id,
+                    str(output_path.with_suffix(''))  # Remove extension, downloader adds it
+                )
+                
+                if not download_result.success:
+                    return False, False, download_result.error_message or "Download failed"
+                
+                # Validate downloaded file with rigorous checking
+                if download_result.file_path:
+                    if not self._validate_local_file(Path(download_result.file_path), rigorous=True):
+                        self.logger.warning(f"Downloaded file failed validation: {download_result.file_path}")
+                        # Delete invalid file
+                        try:
+                            Path(download_result.file_path).unlink()
+                        except Exception:
+                            pass
+                        return False, False, "Downloaded file failed integrity check"
+
+                # Update track status
+                track.audio_status = TrackStatus.DOWNLOADED
+                track.local_file_path = download_result.file_path
+                track.youtube_video_id = search_result.video_id
+                track.youtube_match_score = search_result.total_score
+                
+                # Process audio (trimming, normalization)
+                if download_result.file_path:
+                    self.audio_processor.process_audio_file(download_result.file_path)
+                
+                lyrics_result = None
+
+                # Download lyrics if enabled
+                lyrics_success = False
+                if self.sync_lyrics:
+                    lyrics_result = self.lyrics_processor.search_lyrics(
+                        track.spotify_track.primary_artist,
+                        track.spotify_track.name,
+                        track.spotify_track.album.name
+                    )
+                    
+                    if lyrics_result.success:
+                        # Save lyrics files
+                        lyrics_result = self.lyrics_processor.save_lyrics_files(
+                            lyrics_result,
+                            track.spotify_track.primary_artist,
+                            track.spotify_track.name,
+                            local_directory,
+                            track.playlist_position
+                        )
+                        
+                        # Update track lyrics status
+                        track.lyrics_status = LyricsStatus.DOWNLOADED
+                        track.lyrics_source = lyrics_result.source
+                        if lyrics_result.file_paths:
+                            track.lyrics_file_path = lyrics_result.file_paths[0]
+                        
+                        lyrics_success = True
+                    else:
+                        track.lyrics_status = LyricsStatus.NOT_FOUND
+                else:
+                    # If lyrics are disabled, mark as skipped
+                    track.lyrics_status = LyricsStatus.SKIPPED
+                
+                # Embed metadata (including lyrics if available)
+                if download_result.file_path:
+                    self.metadata_manager.embed_metadata(
+                        download_result.file_path,
+                        track.spotify_track,
+                        track.playlist_position,
+                        lyrics_result.lyrics_text if self.sync_lyrics and lyrics_result.success else None,
+                        lyrics_result.source if self.sync_lyrics and lyrics_result.success else None
+                    )
+                
+                return True, lyrics_success, "Success"
+                
+            except Exception as e:
+                return False, False, str(e)
+        
+        # Execute downloads with controlled concurrency
+        with ThreadPoolExecutor(max_workers=self.max_concurrent) as executor:
+            # Submit all download tasks
+            future_to_operation = {
+                executor.submit(download_single_track, op): op
+                for op in operations
+            }
+            
+            completed = 0
+            for future in as_completed(future_to_operation):
+                operation = future_to_operation[future]
+                
+                try:
+                    download_success, lyrics_success, message = future.result()
+                    
+                    if download_success:
+                        result['completed'] += 1
+                        operation_logger.progress("Downloading tracks", completed + 1, len(operations))
+                    else:
+                        result['failed'] += 1
+                        # Dettagli tecnici solo nel file di log
+                        self.logger.warning(f"Download failed: {operation.track.spotify_track.primary_artist} - {operation.track.spotify_track.name}: {message}")
+                    
+                    if lyrics_success:
+                        result['lyrics_completed'] += 1
+                    elif self.sync_lyrics:
+                        result['lyrics_failed'] += 1
+                    
+                    completed += 1
+                    
+                    # Batch update tracklist every N downloads (VERSIONE VIRTUAL PLAYLIST)
+                    if download_success:
+                        self.download_counter += 1
+                        if self.download_counter % self.batch_update_interval == 0:
+                            try:
+                                # Update virtual playlist track states from operations (NO SPOTIFY REFETCH)
+                                operation_map = {op.track.spotify_track.id: op.track for op in operations if op.track}
+                                for track in virtual_playlist.tracks:
+                                    if track.spotify_track.id in operation_map:
+                                        op_track = operation_map[track.spotify_track.id]
+                                        track.audio_status = op_track.audio_status
+                                        track.lyrics_status = op_track.lyrics_status
+                                        track.local_file_path = op_track.local_file_path
+                                        track.lyrics_file_path = op_track.lyrics_file_path
+                                        track.lyrics_source = op_track.lyrics_source
+                                
+                                # Update tracklist file using virtual playlist
+                                self._create_or_update_tracklist(virtual_playlist, local_directory)
                                 self.logger.debug(f"Batch update: tracklist updated after {self.download_counter} downloads")
                             except Exception as e:
                                 operation_logger.warning(f"Batch tracklist update failed: {e}")
