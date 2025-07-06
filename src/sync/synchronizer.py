@@ -916,6 +916,13 @@ class PlaylistSynchronizer:
             self._create_or_update_tracklist(original_playlist, local_directory)
             
             operation_logger.complete(result.summary)
+            
+            # Cleanup backup files
+            try:
+                self.tracklist_manager.cleanup_backups()
+            except Exception as e:
+                self.logger.warning(f"Failed to cleanup backup files: {e}")
+            
             return result
         
             
@@ -1078,6 +1085,31 @@ class PlaylistSynchronizer:
         except Exception as e:
             self.logger.error(f"Tracklist validation failed: {e}")
             # Continue without validation - sync will handle inconsistencies
+        
+        # Detect and apply existing audio format from downloaded files
+        try:
+            existing_formats = {}
+            for track in playlist.tracks:
+                if track.audio_status == TrackStatus.DOWNLOADED and track.local_file_path:
+                    file_path = local_directory / track.local_file_path
+                    if file_path.exists():
+                        extension = file_path.suffix.lower()
+                        format_map = {'.mp3': 'mp3', '.m4a': 'm4a', '.flac': 'flac'}
+                        if extension in format_map:
+                            format_name = format_map[extension]
+                            existing_formats[format_name] = existing_formats.get(format_name, 0) + 1
+            
+            # Apply most common format
+            if existing_formats:
+                detected_format = max(existing_formats, key=existing_formats.get)
+                if detected_format != self.settings.download.format:
+                    self.logger.info(f"Detected existing format: {detected_format}, switching from {self.settings.download.format}")
+                    self.settings.download.format = detected_format
+                    # Reset downloader to apply new format
+                    from ..ytmusic.downloader import reset_downloader
+                    reset_downloader()
+        except Exception as e:
+            self.logger.warning(f"Failed to detect existing audio format: {e}")
 
     def _create_or_update_tracklist(self, playlist: SpotifyPlaylist, local_directory: Path) -> None:
         """

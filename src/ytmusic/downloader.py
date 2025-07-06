@@ -239,6 +239,40 @@ class YouTubeMusicDownloader:
         }
         return quality_map.get(self.audio_quality, '0')
     
+    def _get_fallback_format_selectors(self) -> List[str]:
+        """Get progressively more permissive format selectors for retry"""
+        if self.audio_format == 'm4a':
+            return [
+                # Primary: Best M4A/AAC
+                'bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio',
+                # Fallback 1: Any M4A/AAC with lower quality constraints
+                'bestaudio[ext=m4a][abr<=256]/bestaudio[acodec=aac][abr<=256]/bestaudio[abr<=256]',
+                # Fallback 2: Any audio, will be converted
+                'bestaudio/best[height<=720]',
+                # Fallback 3: Most permissive
+                'bestaudio/best'
+            ]
+        elif self.audio_format == 'mp3':
+            return [
+                # Primary: Best audio
+                'bestaudio[acodec!=opus]/best[height<=720]',
+                # Fallback 1: Lower quality constraint
+                'bestaudio[abr<=320]/best[height<=480]',
+                # Fallback 2: Any audio
+                'bestaudio/best[height<=720]',
+                # Fallback 3: Most permissive
+                'bestaudio/best'
+            ]
+        else:  # flac
+            return [
+                # Primary: Best audio
+                'bestaudio[acodec!=opus]/best[height<=720]',
+                # Fallback 1: Any audio
+                'bestaudio/best[height<=720]',
+                # Fallback 2: Most permissive
+                'bestaudio/best'
+            ]
+    
     def _rate_limit_download(self) -> None:
         """Apply rate limiting between downloads"""
         with self.download_lock:
@@ -290,55 +324,98 @@ class YouTubeMusicDownloader:
         try:
             self.logger.debug(f"Starting download: {video_id}")
             
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # Extract info first to get metadata
-                info = ydl.extract_info(f"https://youtube.com/watch?v={video_id}", download=False)
+            # Get fallback format selectors for retry
+            format_selectors = self._get_fallback_format_selectors()
+            last_exception = None
+            
+            for attempt, format_selector in enumerate(format_selectors, 1):
+                try:
+                    # Update format selector for this attempt
+                    ydl_opts_attempt = ydl_opts.copy()
+                    ydl_opts_attempt['format'] = format_selector
+                    
+                    if attempt > 1:
+                        self.logger.debug(f"Download attempt {attempt}/{len(format_selectors)} with format: {format_selector}")
+                    
+                    with yt_dlp.YoutubeDL(ydl_opts_attempt) as ydl:
+                        # Extract info first to get metadata (only on first attempt)
+                        if attempt == 1:
+                            info = ydl.extract_info(f"https://youtube.com/watch?v={video_id}", download=False)
+                            
+                            # Validate duration
+                            duration = info.get('duration', 0)
+                            if duration > 0:
+                                if duration < self.min_duration:
+                                    raise Exception(f"Track too short: {duration}s (min: {self.min_duration}s)")
+                                if duration > self.max_duration:
+                                    raise Exception(f"Track too long: {duration}s (max: {self.max_duration}s)")
+                        
+                        # Perform download
+                        ydl.download([f"https://youtube.com/watch?v={video_id}"])
+                        
+                        # If we get here, download succeeded
+                        break
+                        
+                except Exception as e:
+                    last_exception = e
+                    error_msg = str(e)
+                    
+                    # Check if it's a format-related error that we should retry
+                    format_errors = [
+                        'Requested format is not available',
+                        'HTTP Error 403',
+                        'HTTP Error 429',
+                        'Unable to extract',
+                        'format not available'
+                    ]
+                    
+                    should_retry = any(err in error_msg for err in format_errors)
+                    
+                    if should_retry and attempt < len(format_selectors):
+                        self.logger.debug(f"Format attempt {attempt} failed: {error_msg}, trying next format")
+                        continue
+                    else:
+                        # Either not a format error, or we've exhausted all formats
+                        raise e
+            
+            # If we exhausted all format attempts without success
+            if last_exception:
+                raise last_exception
                 
-                # Validate duration
-                duration = info.get('duration', 0)
-                if duration > 0:
-                    if duration < self.min_duration:
-                        raise Exception(f"Track too short: {duration}s (min: {self.min_duration}s)")
-                    if duration > self.max_duration:
-                        raise Exception(f"Track too long: {duration}s (max: {self.max_duration}s)")
+# Find downloaded file
+            downloaded_file = self._find_downloaded_file(video_id)
+            if not downloaded_file:
+                raise Exception("Downloaded file not found")
+            
+            # Move to final location
+            final_extension = get_file_extension(self.audio_format)
+            final_path = f"{output_path}{final_extension}"
+            
+            # Ensure unique filename
+            counter = 1
+            while Path(final_path).exists():
+                base_path = output_path
+                final_path = f"{base_path}_{counter}{final_extension}"
+                counter += 1
                 
-                # Perform download
-                ydl.download([f"https://youtube.com/watch?v={video_id}"])
+            # Move file
+            os.rename(downloaded_file, final_path)
                 
-                # Find downloaded file
-                downloaded_file = self._find_downloaded_file(video_id)
-                if not downloaded_file:
-                    raise Exception("Downloaded file not found")
+            # Get file info
+            file_size = Path(final_path).stat().st_size
+            download_time = time.time() - start_time
                 
-                # Move to final location
-                final_extension = get_file_extension(self.audio_format)
-                final_path = f"{output_path}{final_extension}"
+            self.logger.debug(f"Download completed: {video_id} -> {Path(final_path).name} ({format_file_size(file_size)}, {download_time:.1f}s)")
                 
-                # Ensure unique filename
-                counter = 1
-                while Path(final_path).exists():
-                    base_path = output_path
-                    final_path = f"{base_path}_{counter}{final_extension}"
-                    counter += 1
-                
-                # Move file
-                os.rename(downloaded_file, final_path)
-                
-                # Get file info
-                file_size = Path(final_path).stat().st_size
-                download_time = time.time() - start_time
-                
-                self.logger.debug(f"Download completed: {video_id} -> {Path(final_path).name} ({format_file_size(file_size)}, {download_time:.1f}s)")
-                
-                return DownloadResult(
-                    success=True,
-                    file_path=final_path,
-                    file_size=file_size,
-                    duration=duration,
-                    format_id=info.get('format_id'),
-                    download_time=download_time
-                )
-                
+            return DownloadResult(
+                success=True,
+                file_path=final_path,
+                file_size=file_size,
+                duration=duration,
+                format_id=info.get('format_id'),
+                download_time=download_time
+            )
+ 
         except Exception as e:
             download_time = time.time() - start_time
             error_message = str(e)

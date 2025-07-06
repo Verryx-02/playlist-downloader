@@ -4,7 +4,6 @@ Common functions for file handling, string processing, and validation
 """
 
 import re
-import os
 import unicodedata
 from pathlib import Path
 import time
@@ -521,9 +520,14 @@ def create_search_query(artist: str, title: str, include_official: bool = True) 
     # Space-separated variant
     queries.append(f"{norm_artist} {norm_title}")
     
-    # Title-only query (for difficult artist names)
-    if len(norm_artist.split()) > 2:  # Complex artist name
-        queries.append(norm_title)
+    # Title-only queries (more aggressive for artist mismatches)
+    queries.append(norm_title)  # Always try title only
+    queries.append(title.strip())  # Original title
+    
+    # Additional permissive queries for difficult matches
+    if len(title.split()) > 1:
+        # Quoted search for exact title match
+        queries.append(f'"{norm_title}"')
     
     return queries
 

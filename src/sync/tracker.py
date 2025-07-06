@@ -105,6 +105,8 @@ class TracklistManager:
             LyricsStatus.INSTRUMENTAL: "🎼",
             LyricsStatus.SKIPPED: "⏭️"
         }
+         # Track created backups for cleanup
+        self.created_backups: List[Path] = []
     
     def create_tracklist_file(
     self, 
@@ -137,6 +139,7 @@ class TracklistManager:
                 backup_path = create_backup_filename(tracklist_path)
                 try:
                     tracklist_path.rename(backup_path)
+                    self.created_backups.append(backup_path)
                     self.logger.info(f"Created tracklist backup: {backup_path.name}")
                 except Exception as e:
                     self.logger.warning(f"Failed to create backup: {e}")
@@ -278,6 +281,7 @@ class TracklistManager:
             if self.backup_tracklist:
                 backup_path = create_backup_filename(tracklist_path)
                 tracklist_path.rename(backup_path)
+                self.created_backups.append(backup_path)
                 self.logger.debug(f"Created update backup: {backup_path.name}")
             
             # Write updated file
@@ -657,10 +661,24 @@ class TracklistManager:
             issues.append(f"Parse error: {e}")
             return False, issues
 
+    def cleanup_backups(self) -> None:
+            """Clean up tracked backup files"""
+            cleaned_count = 0
+            for backup_path in self.created_backups:
+                try:
+                    if backup_path.exists():
+                        backup_path.unlink()
+                        cleaned_count += 1
+                except Exception as e:
+                    self.logger.warning(f"Failed to cleanup backup {backup_path}: {e}")
+            
+            if cleaned_count > 0:
+                self.logger.debug(f"Cleaned up {cleaned_count} backup files")
+            
+            self.created_backups.clear()
 
 # Global tracklist manager instance
 _tracklist_manager: Optional[TracklistManager] = None
-
 
 def get_tracklist_manager() -> TracklistManager:
     """Get global tracklist manager instance"""
