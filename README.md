@@ -122,7 +122,7 @@ playlist-dl download "PLAYLIST_URL"
 ---
 
 
-## 📖 Usage Guide
+## Usage Guide
 
 ### Basic Commands
 
@@ -132,7 +132,7 @@ playlist-dl download "https://open.spotify.com/playlist/YOUR_PLAYLIST_ID"
 ```
 
 Options:
-- `--format mp3|flac|m4a`: Audio format (default: mp3)
+- `--format mp3|flac|m4a`: Audio format (default: m4a)
 - `--quality low|medium|high`: Audio quality (default: high)
 - `--no-lyrics`: Skip lyrics download
 - `--output /path/to/output`: Custom output directory
@@ -217,7 +217,7 @@ spotify:
 ~/Music/Playlist Downloads/
 └── My Awesome Playlist/
     ├── tracklist.txt                    # Sync tracking file
-    ├── 01 - Artist - Song Title.mp3     # Audio files
+    ├── 01 - Artist - Song Title.m4a     # Audio files
     ├── 01 - Artist - Song Title.lrc     # Synchronized lyrics
     └── ...
 ```
@@ -405,7 +405,7 @@ src/
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 

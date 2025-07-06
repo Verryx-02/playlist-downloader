@@ -9,7 +9,7 @@ spotify:
 
 download:
   output_directory: "../Playlist Downloads"
-  format: "mp3"           # mp3, flac, m4a
+  format: "m4a"           # mp3, flac, m4a
   quality: "high"         # low, medium, high
   bitrate: 320           # For MP3 format
   concurrency: 3         # Parallel downloads
