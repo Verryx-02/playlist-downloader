@@ -563,7 +563,268 @@ class PlaylistSynchronizer:
                 raise Exception(f"Failed to create playlist directory: {error_msg}")
         
         return validated_path
+    
+    def _find_liked_songs_directory(self) -> Path:
+        """
+        Find or create directory for liked songs
+        
+        Returns:
+            Path to liked songs directory
+        """
+        # Fixed directory name for liked songs
+        directory_name = "My Liked Songs"
+        liked_songs_path = self.output_directory / directory_name
+        
+        # Validate and create the directory
+        success, error_msg, validated_path = validate_and_create_directory(
+            liked_songs_path, 
+            trusted_source=True
+        )
+        
+        if not success:
+            raise Exception(f"Failed to create liked songs directory: {error_msg}")
+        
+        return validated_path
 
+    def _create_liked_songs_sync_plan(
+        self, 
+        virtual_playlist: SpotifyPlaylist, 
+        local_directory: Path
+    ) -> SyncPlan:
+        """
+        Create sync plan for liked songs (virtual playlist)
+        
+        Args:
+            virtual_playlist: Virtual playlist with liked songs
+            local_directory: Local directory for liked songs
+            
+        Returns:
+            SyncPlan for liked songs sync
+        """
+        # Check if local version exists
+        tracklist_path = local_directory / "tracklist.txt"
+        
+        if not tracklist_path.exists():
+            # New liked songs collection - create full download plan
+            return self._create_initial_sync_plan(virtual_playlist, local_directory)
+        else:
+            # Existing collection - create incremental sync plan
+            return self._create_incremental_sync_plan(virtual_playlist, local_directory)
+
+    def execute_liked_songs_sync(self, virtual_playlist: SpotifyPlaylist, local_directory: Path) -> SyncResult:
+        """
+        Execute sync for liked songs without refetching from Spotify
+        
+        Args:
+            virtual_playlist: Already loaded virtual playlist
+            local_directory: Local directory
+            
+        Returns:
+            SyncResult with operation results
+        """
+        # Setup playlist logging
+        self._setup_playlist_logging(virtual_playlist, local_directory)
+        
+        # Create sync plan
+        sync_plan = self._create_liked_songs_sync_plan(virtual_playlist, local_directory)
+        
+        if not sync_plan.has_changes:
+            return SyncResult(
+                success=True,
+                playlist_id=virtual_playlist.id,
+                operations_performed=0,
+                downloads_completed=0,
+                downloads_failed=0,
+                lyrics_completed=0,
+                lyrics_failed=0,
+                reordering_performed=False
+            )
+        
+        # Execute sync using virtual playlist directly (no Spotify refetch)
+        return self._execute_sync_with_virtual_playlist(sync_plan, virtual_playlist, local_directory)
+
+    def _execute_sync_with_virtual_playlist(self, sync_plan: SyncPlan, virtual_playlist: SpotifyPlaylist, local_directory: Path) -> SyncResult:
+        """
+        Execute sync plan using provided virtual playlist (no Spotify API refetch)
+        
+        Args:
+            sync_plan: Sync plan to execute
+            virtual_playlist: Virtual playlist with current state
+            local_directory: Local playlist directory
+            
+        Returns:
+            SyncResult with operation results
+        """
+        # Get new logger instance after reconfiguration
+        operation_logger = OperationLogger(get_logger(__name__), f"Sync: {sync_plan.playlist_name}")
+        operation_logger.start()
+        
+        start_time = datetime.now()
+        
+        try:
+            # Initialize result tracking
+            result = SyncResult(
+                success=True,
+                playlist_id=sync_plan.playlist_id,
+                operations_performed=0,
+                downloads_completed=0,
+                downloads_failed=0,
+                lyrics_completed=0,
+                lyrics_failed=0,
+                reordering_performed=False
+            )
+
+            # Validate existing tracklist and update track states (use virtual playlist)
+            self._validate_existing_tracklist_virtual(virtual_playlist, local_directory)
+
+            # Create initial tracklist if doesn't exist or update with validated states
+            self._create_or_update_tracklist(virtual_playlist, local_directory)
+            operation_logger.progress("Initial tracklist created/validated")
+
+            # Reset download counter for batch updates
+            self.download_counter = 0
+            
+            # Group operations by type
+            download_operations = [op for op in sync_plan.operations if op.operation_type == 'download']
+            move_operations = [op for op in sync_plan.operations if op.operation_type == 'move']
+            
+            # Execute download operations
+            if download_operations:
+                download_result = self._execute_download_operations(
+                    download_operations, local_directory, operation_logger, sync_plan.playlist_id
+                )
+                result.downloads_completed += download_result['completed']
+                result.downloads_failed += download_result['failed']
+                result.lyrics_completed += download_result['lyrics_completed']
+                result.lyrics_failed += download_result['lyrics_failed']
+            
+            # Execute move operations
+            if move_operations:
+                move_result = self._execute_move_operations(
+                    move_operations, local_directory, operation_logger
+                )
+                result.reordering_performed = move_result['reordering_performed']
+            
+            result.operations_performed = len(sync_plan.operations)
+            result.total_time = (datetime.now() - start_time).total_seconds()
+            
+            # Update the virtual playlist tracks with the states from sync operations
+            self._update_playlist_track_states(virtual_playlist, sync_plan.operations)
+            
+            # Create or update tracklist file with updated states
+            self._create_or_update_tracklist(virtual_playlist, local_directory)
+            
+            operation_logger.complete(result.summary)
+            
+            # Cleanup backup files
+            try:
+                self.tracklist_manager.cleanup_backups()
+            except Exception as e:
+                self.logger.warning(f"Failed to cleanup backup files: {e}")
+            
+            return result
+            
+        except Exception as e:
+            operation_logger.error(f"Liked songs sync execution failed: {e}")
+            return SyncResult(
+                success=False,
+                playlist_id=sync_plan.playlist_id,
+                operations_performed=0,
+                downloads_completed=0,
+                downloads_failed=0,
+                lyrics_completed=0,
+                lyrics_failed=0,
+                reordering_performed=False,
+                error_message=str(e)
+            )
+
+    def _validate_existing_tracklist_virtual(self, virtual_playlist: SpotifyPlaylist, local_directory: Path) -> None:
+        """
+        Validate existing tracklist against actual files (for virtual playlists)
+        
+        Args:
+            virtual_playlist: Virtual playlist (liked songs)
+            local_directory: Local playlist directory
+        """
+        try:
+            tracklist_path = local_directory / "tracklist.txt"
+            
+            if not tracklist_path.exists():
+                self.logger.info("No existing tracklist found, will create new one")
+                return
+            
+            self.logger.info("Validating existing tracklist against local files...")
+            
+            # Read existing tracklist
+            metadata, entries = self.tracklist_manager.read_tracklist_file(tracklist_path)
+            
+            # Create lookup map for entries
+            entries_by_id = {entry.spotify_id: entry for entry in entries}
+            
+            validation_updates = 0
+            
+            # Check each track in virtual playlist
+            for track in virtual_playlist.tracks:
+                track_id = track.spotify_track.id
+                
+                if track_id in entries_by_id:
+                    entry = entries_by_id[track_id]
+                    
+                    # If entry says downloaded, verify file exists and is valid
+                    if entry.audio_status == TrackStatus.DOWNLOADED:
+                        if entry.local_file_path:
+                            file_path = local_directory / entry.local_file_path
+                            
+                            if file_path.exists() and self._validate_local_file(file_path, rigorous=False):
+                                # File is valid, update track status
+                                track.audio_status = TrackStatus.DOWNLOADED
+                                track.local_file_path = entry.local_file_path
+                                
+                                # Check lyrics status too
+                                if entry.lyrics_status == LyricsStatus.DOWNLOADED:
+                                    if entry.lyrics_file_path:
+                                        lyrics_path = local_directory / entry.lyrics_file_path
+                                        if lyrics_path.exists():
+                                            track.lyrics_status = LyricsStatus.DOWNLOADED
+                                            track.lyrics_file_path = entry.lyrics_file_path
+                                            track.lyrics_source = entry.lyrics_source
+                                        else:
+                                            track.lyrics_status = LyricsStatus.PENDING
+                                            validation_updates += 1
+                                    else:
+                                        track.lyrics_status = entry.lyrics_status
+                                        track.lyrics_source = entry.lyrics_source
+                            else:
+                                # File missing or invalid, mark as pending
+                                track.audio_status = TrackStatus.PENDING
+                                track.lyrics_status = LyricsStatus.PENDING
+                                validation_updates += 1
+                                self.logger.warning(
+                                    f"File missing or invalid, marking as pending: "
+                                    f"{track.spotify_track.primary_artist} - {track.spotify_track.name}"
+                                )
+                        else:
+                            # No file path in tracklist, mark as pending
+                            track.audio_status = TrackStatus.PENDING
+                            track.lyrics_status = LyricsStatus.PENDING
+                            validation_updates += 1
+                    else:
+                        # Entry shows not downloaded, keep current status
+                        track.audio_status = entry.audio_status
+                        track.lyrics_status = entry.lyrics_status
+                else:
+                    # Track not in existing tracklist, mark as pending
+                    track.audio_status = TrackStatus.PENDING
+                    track.lyrics_status = LyricsStatus.PENDING if self.sync_lyrics else LyricsStatus.SKIPPED
+            
+            if validation_updates > 0:
+                self.logger.info(f"Validation found {validation_updates} status corrections")
+            else:
+                self.logger.info("Tracklist validation completed - all statuses correct")
+                
+        except Exception as e:
+            self.logger.error(f"Tracklist validation failed: {e}")
+            # Continue without validation - sync will handle inconsistencies
 
     def _search_existing_playlist(self, playlist: SpotifyPlaylist) -> List[Path]:
         """

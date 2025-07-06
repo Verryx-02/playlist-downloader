@@ -79,6 +79,87 @@ class SpotifyClient:
                 return func(*args, **kwargs)
             else:
                 raise e
+            
+    def get_user_saved_tracks(self) -> SpotifyPlaylist:
+        """
+        Get user's liked songs as virtual playlist
+        
+        Returns:
+            SpotifyPlaylist object with liked songs
+        """
+        self.logger.info("Fetching user's liked songs")
+        
+        # Create virtual playlist object for liked songs
+        virtual_playlist = SpotifyPlaylist(
+            id="user_saved_tracks",
+            name="My Liked Songs",
+            description="Your liked songs from Spotify",
+            owner_id="current_user",
+            owner_name="You",
+            public=False,
+            collaborative=False,
+            total_tracks=0,  # Will be updated
+            tracks=[]
+        )
+        
+        # Fetch all saved tracks with pagination
+        offset = 0
+        limit = 50
+        position = 1
+        
+        while True:
+            try:
+                results = self._make_request(
+                    self.client.current_user_saved_tracks,
+                    limit=limit,
+                    offset=offset
+                )
+                
+                items = results.get('items', [])
+                if not items:
+                    break
+                
+                for item in items:
+                    track_data = item.get('track')
+                    added_at = item.get('added_at', '')
+                    
+                    if not track_data or not track_data.get('id'):
+                        self.logger.warning(f"Skipping invalid track at position {position}")
+                        position += 1
+                        continue
+                    
+                    try:
+                        # Create SpotifyTrack from track data
+                        spotify_track = SpotifyTrack.from_spotify_data({'track': track_data}, added_at)
+                        
+                        # Add to virtual playlist
+                        playlist_track = virtual_playlist.add_track(spotify_track, position, added_at)
+                        position += 1
+                        
+                    except Exception as e:
+                        self.logger.warning(f"Failed to parse liked track at position {position}: {e}")
+                        position += 1
+                        continue
+                
+                # Check for more pages
+                if not results.get('next'):
+                    break
+                
+                offset += limit
+                
+                # Progress logging for large collections
+                if offset % 500 == 0:
+                    self.logger.info(f"Fetched {offset} liked songs...")
+            
+            except Exception as e:
+                self.logger.error(f"Failed to fetch liked songs at offset {offset}: {e}")
+                raise Exception(f"Failed to fetch liked songs: {e}")
+        
+        # Update total tracks count
+        virtual_playlist.total_tracks = len(virtual_playlist.tracks)
+        
+        self.logger.info(f"Retrieved {len(virtual_playlist.tracks)} liked songs")
+        return virtual_playlist
     
     def extract_playlist_id(self, url_or_id: str) -> str:
         """

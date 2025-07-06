@@ -11,6 +11,7 @@ from pathlib import Path
 from .config.settings import get_settings, reload_settings
 from .config.auth import get_auth, reset_auth
 from .spotify.client import get_spotify_client
+from .spotify.models import TrackStatus
 from .sync.synchronizer import get_synchronizer
 from .lyrics.processor import get_lyrics_processor
 from .utils.logger import configure_from_settings, get_logger, get_current_log_file
@@ -580,6 +581,237 @@ def show():
 @click.option('--output', type=click.Path(), help='Set output directory')
 @click.option('--lyrics-source', type=click.Choice(['genius']), help='Set primary lyrics source')
 @handle_error
+
+@cli.command()
+@click.option('--output', '-o', type=click.Path(), help='Output directory')
+@click.option('--format', type=click.Choice(['mp3', 'flac', 'm4a']), help='Audio format')
+@click.option('--quality', type=click.Choice(['low', 'medium', 'high']), help='Audio quality')
+@click.option('--no-lyrics', is_flag=True, help='Skip lyrics download')
+@click.option('--concurrent', '-c', type=int, help='Concurrent downloads')
+@click.option('--dry-run', is_flag=True, help='Show what would be downloaded without downloading')
+@handle_error
+def download_liked(output, format, quality, no_lyrics, concurrent, dry_run):
+    """Download your Spotify liked songs"""
+    
+    # Validate concurrent downloads
+    if concurrent and (concurrent < 1 or concurrent > 10):
+        click.echo(click.style("❌ Concurrent downloads must be between 1 and 10", fg='red'), err=True)
+        sys.exit(1)
+    
+    if dry_run:
+        click.echo("🔍 Dry run mode - showing what would be downloaded...")
+    
+    # Initialize components
+    settings = get_settings()
+    spotify_client = get_spotify_client()
+    synchronizer = get_synchronizer()
+    
+    # Override settings if options provided
+    if output:
+        settings.download.output_directory = output
+    if format:
+        settings.download.format = format
+        # Force reload of downloader with new format
+        from .ytmusic.downloader import reset_downloader
+        reset_downloader()
+    if quality:
+        settings.download.quality = quality
+    if no_lyrics:
+        settings.lyrics.enabled = False
+    if concurrent:
+        settings.download.concurrency = concurrent
+    
+    # Get liked songs as virtual playlist
+    with click.progressbar(length=100, label='Fetching liked songs') as bar:
+        try:
+            virtual_playlist = spotify_client.get_user_saved_tracks()
+            bar.update(100)
+        except Exception as e:
+            click.echo(click.style(f"❌ Failed to fetch liked songs: {e}", fg='red'), err=True)
+            sys.exit(1)
+    
+    if not virtual_playlist.tracks:
+        click.echo("📭 No liked songs found!")
+        return
+    
+    # Find or create local directory for liked songs
+    local_directory = synchronizer._find_liked_songs_directory()
+    
+    # Create sync plan using virtual playlist ID
+    with click.progressbar(length=100, label='Analyzing liked songs') as bar:
+        # Use the synchronizer with our virtual playlist
+        sync_plan = synchronizer._create_liked_songs_sync_plan(virtual_playlist, local_directory)
+        bar.update(100)
+    
+    if not sync_plan.has_changes:
+        click.echo("✅ All liked songs are already downloaded!")
+        return
+    
+    logger.console_info(f"🎵 My Liked Songs ({sync_plan.estimated_downloads} tracks to download)")
+    
+    if dry_run:
+        click.echo("\n🔍 Operations that would be performed:")
+        for i, operation in enumerate(sync_plan.operations, 1):
+            if operation.track:
+                click.echo(f"   {i}. Download: {operation.track.spotify_track.primary_artist} - {operation.track.spotify_track.name}")
+            else:
+                click.echo(f"   {i}. {operation.operation_type}: {operation.reason}")
+        return
+    
+    # Confirm with user
+    if not click.confirm(f"\nProceed with downloading {sync_plan.estimated_downloads} liked songs?"):
+        click.echo("❌ Download cancelled")
+        return
+    
+    # Execute sync plan
+    result = synchronizer.execute_liked_songs_sync(virtual_playlist, local_directory)
+    
+    # Show results
+    if result.downloads_failed > 0:
+        logger.console_info(f"✅ {result.downloads_completed} downloaded, {result.downloads_failed} failed")
+    else:
+        logger.console_info(f"✅ {result.downloads_completed} tracks downloaded")
+        
+    if settings.lyrics.enabled:
+        click.echo(f"   🎵 Lyrics: {result.lyrics_completed}")
+        click.echo(f"   🚫 Lyrics failed: {result.lyrics_failed}")
+    
+    if result.total_time:
+        click.echo(f"   ⏱️ Total time: {format_duration(result.total_time)}")
+    
+    click.echo(f"\n📁 Files saved to: {local_directory}")
+    
+
+@cli.command()
+@click.option('--output', '-o', type=click.Path(), help='Output directory')
+@handle_error
+def sync_liked(output):
+    """🔄 Synchronize your Spotify liked songs"""
+    
+    click.echo("🔄 Synchronizing liked songs...")
+    
+    # Initialize components
+    settings = get_settings()
+    spotify_client = get_spotify_client()
+    synchronizer = get_synchronizer()
+    
+    # Override output directory if provided
+    if output:
+        settings.download.output_directory = output
+    
+    # Check current status
+    with click.progressbar(length=100, label='Checking liked songs status') as bar:
+        try:
+            # Get current liked songs from Spotify
+            virtual_playlist = spotify_client.get_user_saved_tracks()
+            bar.update(50)
+            
+            # Find local directory
+            local_directory = synchronizer._find_liked_songs_directory()
+            
+            # Check if sync is needed
+            sync_plan = synchronizer._create_liked_songs_sync_plan(virtual_playlist, local_directory)
+            bar.update(100)
+            
+        except Exception as e:
+            click.echo(f"❌ Error checking status: {e}")
+            return
+    
+    # Show current status
+    click.echo(f"\n📋 Liked Songs Status:")
+    click.echo(f"   📛 Collection: My Liked Songs")
+    click.echo(f"   🎵 Total tracks: {len(virtual_playlist.tracks)}")
+    click.echo(f"   📁 Local directory: {local_directory}")
+    
+    tracklist_path = local_directory / "tracklist.txt"
+    click.echo(f"   📄 Tracklist exists: {'Yes' if tracklist_path.exists() else 'No'}")
+    
+    if not sync_plan.has_changes:
+        click.echo("✅ Liked songs are already up to date!")
+        return
+    
+    # Show what needs sync
+    click.echo(f"   🔄 Needs sync: Yes")
+    click.echo(f"   📥 Downloads needed: {sync_plan.estimated_downloads}")
+    
+    if sync_plan.estimated_time:
+        click.echo(f"   ⏱️ Estimated time: {format_duration(sync_plan.estimated_time)}")
+    
+    # Confirm sync
+    if not click.confirm(f"\nProceed with sync ({sync_plan.estimated_downloads} downloads)?"):
+        click.echo("❌ Sync cancelled")
+        return
+    
+    click.echo("\n🚀 Starting sync...")
+    
+    # Execute sync
+    result = synchronizer.execute_liked_songs_sync(virtual_playlist, local_directory)
+    
+    # Show results
+    click.echo(f"\n📊 Sync Results: {result.summary}")
+    
+    if result.success:
+        if result.downloads_completed > 0:
+            click.echo(f"   ✅ Downloaded: {result.downloads_completed}")
+        if result.downloads_failed > 0:
+            click.echo(f"   ❌ Failed: {result.downloads_failed}")
+        if settings.lyrics.enabled:
+            if result.lyrics_completed > 0:
+                click.echo(f"   🎵 Lyrics: {result.lyrics_completed}")
+            if result.lyrics_failed > 0:
+                click.echo(f"   🚫 Lyrics failed: {result.lyrics_failed}")
+        if result.total_time:
+            click.echo(f"   ⏱️ Duration: {format_duration(result.total_time)}")
+        
+        click.echo(f"\n📁 Files saved to: {local_directory}")
+    else:
+        click.echo(f"❌ Sync failed: {result.error_message}")
+
+@cli.command()
+@handle_error
+def check_liked():
+    """🔍 Check your Spotify liked songs status without downloading"""
+    
+    click.echo("🔍 Checking liked songs status...")
+    
+    # Initialize components
+    spotify_client = get_spotify_client()
+    synchronizer = get_synchronizer()
+    
+    with click.progressbar(length=100, label='Analyzing liked songs') as bar:
+        try:
+            # Get current liked songs
+            virtual_playlist = spotify_client.get_user_saved_tracks()
+            bar.update(50)
+            
+            # Find local directory and check status
+            local_directory = synchronizer._find_liked_songs_directory()
+            sync_plan = synchronizer._create_liked_songs_sync_plan(virtual_playlist, local_directory)
+            bar.update(100)
+            
+        except Exception as e:
+            click.echo(f"❌ Error: {e}")
+            return
+    
+    # Show detailed status
+    click.echo(f"\n📋 Liked Songs Information:")
+    click.echo(f"   📛 Collection: My Liked Songs")
+    click.echo(f"   🎵 Total tracks: {len(virtual_playlist.tracks)}")
+    click.echo(f"   📁 Local directory: {local_directory}")
+    
+    tracklist_path = local_directory / "tracklist.txt"
+    click.echo(f"   📄 Tracklist exists: {'Yes' if tracklist_path.exists() else 'No'}")
+    click.echo(f"   🔄 Needs sync: {'Yes' if sync_plan.has_changes else 'No'}")
+    
+    if sync_plan.has_changes:
+        click.echo(f"   📥 Downloads needed: {sync_plan.estimated_downloads}")
+        if sync_plan.estimated_time:
+            click.echo(f"   ⏱️ Estimated time: {format_duration(sync_plan.estimated_time)}")
+    else:
+        # Show current download status
+        downloaded_count = sum(1 for t in virtual_playlist.tracks if t.audio_status == TrackStatus.DOWNLOADED)
+        click.echo(f"   📊 Status: {downloaded_count}/{len(virtual_playlist.tracks)} tracks downloaded")
+
 def set(format, quality, output, lyrics_source):
     """Update configuration settings"""
     
