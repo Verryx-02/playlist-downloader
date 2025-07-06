@@ -51,7 +51,7 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
 
 1. **Clone the repository**:
 ```bash
-git clone https://github.com/playlist-downloader/playlist-downloader.git
+git clone https://github.com/Verryx-02/playlist-downloader
 cd playlist-downloader
 ```
 
