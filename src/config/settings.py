@@ -40,7 +40,7 @@ class AudioConfig:
     """Audio processing configuration"""
     trim_silence: bool = True
     normalize: bool = False
-    max_duration: int = 900  # 15 minutes
+    max_duration: int = 960  # 16 minutes
     min_duration: int = 30   # 30 seconds
     sample_rate: int = 44100
     channels: int = 2

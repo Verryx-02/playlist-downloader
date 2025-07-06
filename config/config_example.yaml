@@ -19,7 +19,7 @@ download:
 audio:
   trim_silence: true     # Remove silence from start/end
   normalize: false       # Audio normalization
-  max_duration: 900      # 15 minutes maximum
+  max_duration: 960      # 16 minutes maximum
   min_duration: 30       # 30 seconds minimum
   sample_rate: 44100     # Audio sample rate
   channels: 2            # Stereo audio
