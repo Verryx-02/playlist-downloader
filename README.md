@@ -154,6 +154,42 @@ playlist-dl check "https://open.spotify.com/playlist/YOUR_PLAYLIST_ID"
 playlist-dl list --show-lyrics
 ```
 
+### Liked Songs Management
+
+#### Download Your Liked Songs
+```bash
+playlist-dl download-liked
+```
+
+Downloads all your Spotify liked songs to a "My Liked Songs" folder.
+
+Options:
+- `--format mp3|flac|m4a`: Audio format (default: m4a)
+- `--quality low|medium|high`: Audio quality (default: high)
+- `--no-lyrics`: Skip lyrics download
+- `--output /path/to/output`: Custom output directory
+- `--concurrent 5`: Number of parallel downloads
+- `--dry-run`: Preview what would be downloaded
+
+#### Sync Liked Songs
+```bash
+playlist-dl sync-liked
+```
+
+Synchronizes your liked songs collection, downloading only newly liked tracks since the last sync.
+
+Options:
+- `--output /path/to/output`: Custom output directory
+
+#### Check Liked Songs Status
+```bash
+playlist-dl check-liked
+```
+
+Shows the current status of your liked songs collection without downloading anything.
+
+**Note**: Your liked songs are automatically organized in a dedicated "My Liked Songs" folder and managed with the same sync tracking system as regular playlists.
+
 ### Lyrics Management
 
 #### Download Lyrics Only
