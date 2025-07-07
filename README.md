@@ -98,14 +98,10 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
     Click on "download zip"  
     extract the zip on Desktop.   
     You can delete the zip file now if you want  
-    Enter in the project directory using the powershell  
+
+    **Enter in the project directory**
     ```powershell
-    cd 
-    ```
-    **drag and drop the project folder in the powershell and press Enter**
-    **OR**
-    ```powershell
-    cd C:\Users\$env:USERNAME\Desktop\playlist-downloader-main
+    cd C:\Users\$env:USERNAME\Desktop\playlist-downloader*
     ```
 
 2.	**Create a virtual environment**:
@@ -152,7 +148,7 @@ The SSH tunnel makes your computer temporarily reachable from the internet for t
    ssh -R 80:localhost:8080 nokey@localhost.run
    ```
 
-2. **The service will generate a giant QW Code and give you a URL like:**
+2. **The service will generate a giant QR Code and give you a URL like:**
    ```
    https://abc123.lhr.life
    ```
@@ -170,10 +166,10 @@ The SSH tunnel makes your computer temporarily reachable from the internet for t
 ### **Step 1: Create Spotify App**
 
 1. **Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)**
-2. **Login** with your Spotify account
-3. Click **"Create an App"**
-4. Fill out the form:
-   - **App name:** 
+2. **Login** with your Spotify account  
+3. Click **"Create an App"**  
+4. Fill out the form:  
+   - **App name:**
    ```bash
    Playlist Downloader
    ```
@@ -193,8 +189,11 @@ The SSH tunnel makes your computer temporarily reachable from the internet for t
    ```bash
    https://abc123.lhr.life/callback
    ```
+
+   - **Select [x]Web API**  
+
 5. **Click "Save"**
-6. **Copy your Client ID and Client Secret in the same file of the link**
+6. **Copy your Client ID and Client Secret in the same temporary file of the link**
 
 ### **Step 2: Configure the Project**
 
@@ -300,7 +299,7 @@ download:
 audio:
   trim_silence: true     # Remove silence from start/end
   normalize: false       # Audio normalization (can take longer)
-  max_duration: 900      # Skip tracks longer than 15 minutes
+  max_duration: 960      # Skip tracks longer than 16 minutes
   min_duration: 30       # Skip tracks shorter than 30 seconds
 ```
 
