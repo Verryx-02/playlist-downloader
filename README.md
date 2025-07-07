@@ -93,7 +93,7 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
    ```  
 
     **If you don't have Git:**
-    go to https://github.com/Verryx-02/playlist-downloader 
+    go to https://github.com/Verryx-02/playlist-downloader  
     Click on the green botton "Code"  
     Click on "download zip"  
     extract the zip on Desktop.   
