@@ -48,59 +48,58 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
 - Spotify API keys
 - Genius API access token (recommended)
 
-### **Step 1: Install Python**
-
-1. **Download Python:**
-   - Go to [python.org/downloads](https://www.python.org/downloads/)
-   - Click "Download Python 3.x.x" (latest version)
-
-2. **Install Python:**
-   - ⚠️ **CRITICAL**: Check "Add Python to PATH" during installation
-   - Click "Install Now"
-   - Restart your computer after installation
-
-3. **Verify installation:**
-   ```powershell
-   python -V
-   ```
-   Expected output: `Python 3.x.x`
-
-### **Step 2: Install FFmpeg (Windows)**
-
-1. **Install Chocolatey (Package Manager):**
+### **Step 1: Install a Package Manager**
+1. **Install Chocolatey:**
    - Open PowerShell as **Administrator** (Right-click → "Run as administrator")
    - Copy and paste this command:
    ```powershell
    Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+
    ```
 
-2. **Install FFmpeg:**
+### **Step 2: Install Python**
+1. **Install Python**
+    ```powershell
+    choco install python
+
+    ```
+2. **Verify installation:**
+   ```powershell
+   python -V
+
+   ```
+
+### **Step 3: Install FFmpeg**
+1. **Install FFmpeg:**
    ```powershell
    choco install ffmpeg
+
    ```
 
-3. **Verify installation:**
+2. **Verify installation:**
    ```powershell
    ffmpeg -version
+
    ```
 
 ### **Step 3: Download and Setup Playlist-Downloader**
 
 1. **Download the project:**
-    # If you have Git:
+    **If you have Git:**
    ```powershell
    git clone https://github.com/Verryx-02/playlist-downloader
    cd playlist-downloader
    ```
-    # If you don't have Git:
-    # go to https://github.com/Verryx-02/playlist-downloader 
-    # clic on the green botton "Code"
-    # clic on "download zip"
-    # extract the zip on Desktop
-    # enter in the project directory 
+    **If you don't have Git:**
+    go to https://github.com/Verryx-02/playlist-downloader 
+    clic on the green botton "Code"
+    clic on "download zip"
+    extract the zip on Desktop
+    enter in the project directory using the powershell
     ```powershell
-    cd playlist-downloader
+    cd 
     ```
+    drag and drop the project folder in the powershell and press Enter
 
 2.	**Create a virtual environment (recommended)**:
 ```bash
@@ -109,24 +108,28 @@ python -m venv .venv
 
 3. **Activate a virtual environment**
 
-# On Windows:
+**On Windows:**
 ```bash
 .venv\Scripts\activate
+
 ```
 
-# On Linux/macOS:
+**On Linux/macOS:**
 ```bash
 source .venv/bin/activate
+
 ```
 
 4. **Install dependencies**:
 ```bash
 pip install -r requirements.txt
+
 ```
 
 5. **Install the package**:
 ```bash
 pip install -e .
+
 ```
 
 ---
