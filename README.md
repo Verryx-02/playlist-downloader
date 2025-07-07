@@ -94,11 +94,11 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
 
     **If you don't have Git:**
     go to https://github.com/Verryx-02/playlist-downloader 
-    **clic on the green botton "Code"**
-    **clic on "download zip"**
-    **extract the zip on Desktop**
-    **you can delete the zip file now if you want**
-    **enter in the project directory using the powershell**
+    Click on the green botton "Code"  
+    Click on "download zip"  
+    extract the zip on Desktop.   
+    You can delete the zip file now if you want  
+    Enter in the project directory using the powershell  
     ```powershell
     cd 
     ```
@@ -171,8 +171,8 @@ The SSH tunnel makes your computer temporarily reachable from the internet for t
 
 1. **Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)**
 2. **Login** with your Spotify account
-3. **Click "Create an App"**
-4. **Fill out the form:**
+3. Click **"Create an App"**
+4. Fill out the form:
    - **App name:** 
    ```bash
    Playlist Downloader
