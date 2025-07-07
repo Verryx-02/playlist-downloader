@@ -11,12 +11,12 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
 - **Complete Playlist Downloads**: Download entire Spotify playlists with metadata
 - **High-Quality Audio**: Best available audio quality from YouTube Music (up to 256kbps AAC)
 - **Intelligent Matching**: Advanced algorithm for finding the best YouTube Music matches
-- **Multi-Format Support**: MP3, FLAC, and M4A output formats
+- **Multi-Format Support**: M4A, MP3, and FLAC output formats 
 
 ### **Lyrics Integration**
 - **Multi-Source Lyrics**: Primary support for Genius API
 - **Automatic Embedding**: Lyrics embedded directly in audio file metadata
-- **Separate Files**: Optional .lrc (synchronized) and .txt (plain) lyrics files
+- **Separate Files**: Optional .lrc (synchronized) and .txt lyrics files
 - **Smart Matching**: Intelligent lyrics search with quality validation
 
 ### **Synchronization**
@@ -45,36 +45,322 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
 
 - Python 3.8+
 - FFmpeg (for audio processing)
-- Spotify Developer Account (for API access)
+- Spotify API keys
+- Genius API access token (recommended)
 
-### Installation
+### **Step 1: Install Python**
 
-1. **Clone the repository**:
-```bash
-git clone https://github.com/Verryx-02/playlist-downloader
-cd playlist-downloader
-```
+1. **Download Python:**
+   - Go to [python.org/downloads](https://www.python.org/downloads/)
+   - Click "Download Python 3.x.x" (latest version)
 
-2.	**Create and activate a virtual environment (recommended)**:
+2. **Install Python:**
+   - ⚠️ **CRITICAL**: Check "Add Python to PATH" during installation
+   - Click "Install Now"
+   - Restart your computer after installation
+
+3. **Verify installation:**
+   ```powershell
+   python -V
+   ```
+   Expected output: `Python 3.x.x`
+
+### **Step 2: Install FFmpeg (Windows)**
+
+1. **Install Chocolatey (Package Manager):**
+   - Open PowerShell as **Administrator** (Right-click → "Run as administrator")
+   - Copy and paste this command:
+   ```powershell
+   Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+   ```
+
+2. **Install FFmpeg:**
+   ```powershell
+   choco install ffmpeg
+   ```
+
+3. **Verify installation:**
+   ```powershell
+   ffmpeg -version
+   ```
+
+### **Step 3: Download and Setup Playlist-Downloader**
+
+1. **Download the project:**
+    # If you have Git:
+   ```powershell
+   git clone https://github.com/Verryx-02/playlist-downloader
+   cd playlist-downloader
+   ```
+    # If you don't have Git:
+    # go to https://github.com/Verryx-02/playlist-downloader 
+    # clic on the green botton "Code"
+    # clic on "download zip"
+    # extract the zip on Desktop
+    # enter in the project directory 
+    ```powershell
+    cd playlist-downloader
+    ```
+
+2.	**Create a virtual environment (recommended)**:
 ```bash
 python -m venv .venv
+```
 
-# On Linux/macOS:
-source .venv/bin/activate
+3. **Activate a virtual environment**
 
 # On Windows:
+```bash
 .venv\Scripts\activate
 ```
 
-3. **Install dependencies**:
+# On Linux/macOS:
+```bash
+source .venv/bin/activate
+```
+
+4. **Install dependencies**:
 ```bash
 pip install -r requirements.txt
 ```
 
-4. **Install the package**:
+5. **Install the package**:
 ```bash
 pip install -e .
 ```
+
+---
+
+## Spotify Configuration
+
+### **Step 1: Create Spotify App**
+
+1. **Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)**
+2. **Login** with your Spotify account
+3. **Click "Create an App"**
+4. **Fill out the form:**
+   - **App name:** `Playlist Downloader`
+   - **App description:** `Personal music downloader`
+   - **Website:** `http://localhost`
+   - **Redirect URI:** `http://localhost:8080/callback`
+5. **Click "Save"**
+6. **Copy your Client ID and Client Secret** (you'll need these next)
+
+### **Step 2: Configure the Project**
+
+1. **Open the configuration file:**
+   ```powershell
+   notepad config\config.yaml
+   ```
+
+2. **Update Spotify credentials:**
+   ```yaml
+   spotify:
+     client_id: "YOUR_CLIENT_ID_HERE"
+     client_secret: "YOUR_CLIENT_SECRET_HERE"
+     redirect_url: "http://localhost:8080/callback"
+   ```
+
+3. **Save the file**
+
+---
+
+## 🌐 SSH Tunnel Setup (Required for Authentication)
+
+**Why needed:** Spotify needs to redirect you after authorization. The SSH tunnel makes your computer temporarily reachable from the internet for this callback.
+
+### **Method 1: localhost.run (Recommended)**
+
+1. **In a separate terminal window, run:**
+   ```powershell
+   ssh -R 80:localhost:8080 nokey@localhost.run
+   ```
+
+2. **The service will give you a URL like:**
+   ```
+   Connect to http://abc123.lhr.life or https://abc123.lhr.life
+   ```
+
+3. **Update your configuration:**
+   ```yaml
+   spotify:
+     redirect_url: "https://abc123.lhr.life/callback"
+   ```
+   ⚠️ **Important:** Add `/callback` at the end!
+
+4. **Update your Spotify app:**
+   - Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+   - Click your app → "Settings"
+   - In "Redirect URIs" add: `https://abc123.lhr.life/callback`
+   - **Click "Save"**
+
+
+## 🎵 First Use
+
+### **Step 1: Spotify Authentication**
+
+1. **Make sure your SSH tunnel is still running**
+2. **Run login command:**
+   ```powershell
+   playlist-dl auth login
+   ```
+
+3. **The browser will open automatically to Spotify**
+4. **Click "Authorize" or "Allow"**
+5. **Authentication should complete automatically**
+
+**If you see "Enter the authorization code":**
+- You're using an external tunnel
+- Copy the **long code** from the redirected URL (not the Client ID)
+- The code looks like: `AQBmA7j8k3L9m2N5o6P7q8R9s0T1u2V3w4X5y6Z7`
+
+### **Step 2: System Test**
+
+```powershell
+# Check if everything works
+playlist-dl doctor
+```
+
+### **Step 3: Your First Download**
+
+1. **Find a Spotify playlist:**
+   - Go to any Spotify playlist you like
+   - Click "Share" → "Copy link"
+
+2. **Download the playlist:**
+   ```powershell
+   playlist-dl download "https://open.spotify.com/playlist/YOUR_LINK_HERE"
+   ```
+
+3. **Files will be saved to:**
+   ```
+   C:\Users\YourName\Music\Playlist Downloads\Playlist Name\
+   ```
+
+---
+
+## ⚙️ Advanced Configuration
+
+### **Change Download Directory**
+
+**Edit config.yaml:**
+```yaml
+download:
+  output_directory: "C:\Music\My_Playlists"
+  format: "m4a"          # m4a, mp3, flac
+  quality: "high"        # low, medium, high
+  concurrency: 3         # parallel downloads
+```
+
+### **Configure Lyrics (Optional but Recommended)**
+
+1. **Get Genius API key (for better lyrics):**
+   - Go to [genius.com/api-clients](https://genius.com/api-clients)
+   - Create new app
+   - Copy "Client Access Token"
+
+2. **Add to config.yaml:**
+   ```yaml
+   lyrics:
+     enabled: true
+     genius_api_key: "YOUR_GENIUS_KEY_HERE"
+     download_separate_files: true
+     embed_in_audio: true
+   ```
+
+### **Audio Quality Settings**
+
+```yaml
+audio:
+  trim_silence: true     # Remove silence from start/end
+  normalize: false       # Audio normalization (can take longer)
+  max_duration: 900      # Skip tracks longer than 15 minutes
+  min_duration: 30       # Skip tracks shorter than 30 seconds
+```
+
+---
+
+## 🎮 Usage Commands
+
+### **Basic Commands**
+
+```powershell
+# Download a playlist
+playlist-dl download "SPOTIFY_PLAYLIST_URL"
+
+# Download with custom options
+playlist-dl download "PLAYLIST_URL" --format mp3 --quality high --no-lyrics
+
+# Sync existing playlist (download only new tracks)
+playlist-dl sync "PLAYLIST_URL"
+
+# Check playlist status without downloading
+playlist-dl check "PLAYLIST_URL"
+
+# List all local playlists
+playlist-dl list --show-lyrics
+
+# Download your liked songs
+playlist-dl download-liked
+
+# Check authentication status
+playlist-dl auth status
+
+# System diagnostics
+playlist-dl doctor
+```
+
+### **Configuration Commands**
+
+```powershell
+# View current settings
+playlist-dl config show
+
+# Update settings
+playlist-dl config set --format flac --quality high
+
+# Manage lyrics
+playlist-dl lyrics sources
+playlist-dl lyrics download "PLAYLIST_URL"
+```
+
+---
+
+## Using Downloaded Music
+
+### **For Android Users**
+
+**Recommended apps for offline playback with lyrics:**
+
+- **Musicolet Music Player** (Free, excellent LRC support)
+
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ### Configuration
 
