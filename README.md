@@ -221,7 +221,7 @@ The SSH tunnel makes your computer temporarily reachable from the internet for t
 ---
 
 
-## 🎵 First Use
+## First Use
 
 ### **Step 1: Spotify Authentication**
 
