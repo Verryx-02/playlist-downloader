@@ -189,7 +189,7 @@ The SSH tunnel makes your computer temporarily reachable from the internet for t
    http://localhost
    ```
 
-   - **⚠️Redirect URI: use the link saved before. The link below is just an example⚠️** 
+   - **⚠️Redirect URI: use the link saved before. The link below is just an example. Don't copy it⚠️** 
    ```bash
    https://abc123.lhr.life/callback
    ```
@@ -586,7 +586,7 @@ The developers are not responsible for any misuse of this software.
 
 ### Version History
 
-- **v1.0.0** (Current): Initial release with core functionality
+- **v0.9.0-beta** (Current): Initial release with core functionality
 
 ---
 

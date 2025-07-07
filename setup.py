@@ -32,7 +32,7 @@ core_requirements = [
 
 setup(
     name="playlist-downloader",
-    version="1.0.0",
+    version="v0.9.0-beta",
     author="Playlist-Downloader Team",
     author_email="contact@playlist-downloader.com",
     description="Download Spotify playlists locally with YouTube Music integration and lyrics support",
