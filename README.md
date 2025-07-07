@@ -84,29 +84,37 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
 
 ### **Step 3: Download and Setup Playlist-Downloader**
 
-1. **Download the project:**
+1. **Download the project:**  
+
     **If you have Git:**
    ```powershell
    git clone https://github.com/Verryx-02/playlist-downloader
    cd playlist-downloader
-   ```
+   ```  
+
     **If you don't have Git:**
     go to https://github.com/Verryx-02/playlist-downloader 
-    clic on the green botton "Code"
-    clic on "download zip"
-    extract the zip on Desktop
-    enter in the project directory using the powershell
+    **clic on the green botton "Code"**
+    **clic on "download zip"**
+    **extract the zip on Desktop**
+    **you can delete the zip file now if you want**
+    **enter in the project directory using the powershell**
     ```powershell
     cd 
     ```
-    drag and drop the project folder in the powershell and press Enter
+    **drag and drop the project folder in the powershell and press Enter**
+    **OR**
+    ```powershell
+    cd C:\Users\$env:USERNAME\Desktop\playlist-downloader-main
+    ```
 
-2.	**Create a virtual environment (recommended)**:
+2.	**Create a virtual environment**:
 ```bash
 python -m venv .venv
+
 ```
 
-3. **Activate a virtual environment**
+3. **Activate the virtual environment**
 
 **On Windows:**
 ```bash
@@ -134,6 +142,29 @@ pip install -e .
 
 ---
 
+## SSH Tunnel Setup (Required for Authentication)
+
+**Why needed:** Spotify needs to redirect you after authorization.   
+The SSH tunnel makes your computer temporarily reachable from the internet for this callback.
+
+1. **In a separate terminal window, run:**
+   ```powershell
+   ssh -R 80:localhost:8080 nokey@localhost.run
+   ```
+
+2. **The service will generate a giant QW Code and give you a URL like:**
+   ```
+   https://abc123.lhr.life
+   ```
+
+3. **Save this link in a temporary file for now and add /callback at the end of the link.**
+**the link have to be like this:**
+   ```bash
+   https://abc123.lhr.life/callback
+   ```
+
+4. **Do NOT close the ssh tunnel (the terminal with the giant QR)**
+
 ## Spotify Configuration
 
 ### **Step 1: Create Spotify App**
@@ -142,18 +173,34 @@ pip install -e .
 2. **Login** with your Spotify account
 3. **Click "Create an App"**
 4. **Fill out the form:**
-   - **App name:** `Playlist Downloader`
-   - **App description:** `Personal music downloader`
-   - **Website:** `http://localhost`
-   - **Redirect URI:** `http://localhost:8080/callback`
+   - **App name:** 
+   ```bash
+   Playlist Downloader
+   ```
+
+   - **App description:** 
+
+   ```bash
+   Personal music downloader`
+   ```
+
+   - **Website:** 
+   ```bash
+   http://localhost
+   ```
+
+   - **⚠️Redirect URI: use the link saved before. The link below is just an example⚠️** 
+   ```bash
+   https://abc123.lhr.life/callback
+   ```
 5. **Click "Save"**
-6. **Copy your Client ID and Client Secret** (you'll need these next)
+6. **Copy your Client ID and Client Secret in the same file of the link**
 
 ### **Step 2: Configure the Project**
 
 1. **Open the configuration file:**
    ```powershell
-   notepad config\config.yaml
+   notepad config\config_example.yaml
    ```
 
 2. **Update Spotify credentials:**
@@ -161,41 +208,17 @@ pip install -e .
    spotify:
      client_id: "YOUR_CLIENT_ID_HERE"
      client_secret: "YOUR_CLIENT_SECRET_HERE"
-     redirect_url: "http://localhost:8080/callback"
+     redirect_url: "YOUR_COPIED_LINK"
    ```
 
 3. **Save the file**
 
+4. **Rename the config_example.yaml file to**
+    ```bash
+    config.yaml
+    ```
+
 ---
-
-## 🌐 SSH Tunnel Setup (Required for Authentication)
-
-**Why needed:** Spotify needs to redirect you after authorization. The SSH tunnel makes your computer temporarily reachable from the internet for this callback.
-
-### **Method 1: localhost.run (Recommended)**
-
-1. **In a separate terminal window, run:**
-   ```powershell
-   ssh -R 80:localhost:8080 nokey@localhost.run
-   ```
-
-2. **The service will give you a URL like:**
-   ```
-   Connect to http://abc123.lhr.life or https://abc123.lhr.life
-   ```
-
-3. **Update your configuration:**
-   ```yaml
-   spotify:
-     redirect_url: "https://abc123.lhr.life/callback"
-   ```
-   ⚠️ **Important:** Add `/callback` at the end!
-
-4. **Update your Spotify app:**
-   - Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
-   - Click your app → "Settings"
-   - In "Redirect URIs" add: `https://abc123.lhr.life/callback`
-   - **Click "Save"**
 
 
 ## 🎵 First Use
@@ -210,18 +233,18 @@ pip install -e .
 
 3. **The browser will open automatically to Spotify**
 4. **Click "Authorize" or "Allow"**
-5. **Authentication should complete automatically**
 
-**If you see "Enter the authorization code":**
-- You're using an external tunnel
-- Copy the **long code** from the redirected URL (not the Client ID)
-- The code looks like: `AQBmA7j8k3L9m2N5o6P7q8R9s0T1u2V3w4X5y6Z7`
+**In the terminal you will see "Enter the authorization code":**
+- Copy the **long code** from the redirected URL
+- The code looks like: `AQBmA7j8k3L9m2N5o6P7...` and it's very long
+- Paste the code in the terminal and press Enter
 
 ### **Step 2: System Test**
 
 ```powershell
 # Check if everything works
 playlist-dl doctor
+
 ```
 
 ### **Step 3: Your First Download**
@@ -242,7 +265,7 @@ playlist-dl doctor
 
 ---
 
-## ⚙️ Advanced Configuration
+## Advanced Configuration
 
 ### **Change Download Directory**
 
@@ -283,134 +306,6 @@ audio:
 
 ---
 
-## 🎮 Usage Commands
-
-### **Basic Commands**
-
-```powershell
-# Download a playlist
-playlist-dl download "SPOTIFY_PLAYLIST_URL"
-
-# Download with custom options
-playlist-dl download "PLAYLIST_URL" --format mp3 --quality high --no-lyrics
-
-# Sync existing playlist (download only new tracks)
-playlist-dl sync "PLAYLIST_URL"
-
-# Check playlist status without downloading
-playlist-dl check "PLAYLIST_URL"
-
-# List all local playlists
-playlist-dl list --show-lyrics
-
-# Download your liked songs
-playlist-dl download-liked
-
-# Check authentication status
-playlist-dl auth status
-
-# System diagnostics
-playlist-dl doctor
-```
-
-### **Configuration Commands**
-
-```powershell
-# View current settings
-playlist-dl config show
-
-# Update settings
-playlist-dl config set --format flac --quality high
-
-# Manage lyrics
-playlist-dl lyrics sources
-playlist-dl lyrics download "PLAYLIST_URL"
-```
-
----
-
-## Using Downloaded Music
-
-### **For Android Users**
-
-**Recommended apps for offline playback with lyrics:**
-
-- **Musicolet Music Player** (Free, excellent LRC support)
-
----
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-### Configuration
-
-1. **Create Spotify App**:
-   - Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
-   - Create a new app
-   - Note your `Client ID` and `Client Secret`
-   - Add `http://localhost:8080/callback` to Redirect URIs
-
-2. **Set up environment variables**:
-```bash
-export SPOTIFY_CLIENT_ID="your_client_id"
-export SPOTIFY_CLIENT_SECRET="your_client_secret"
-```
-
-Or create a `.env` file:
-```env
-SPOTIFY_CLIENT_ID=your_client_id
-SPOTIFY_CLIENT_SECRET=your_client_secret
-```
-
-3. **Optional: Configure Lyrics APIs**:
-```bash
-export GENIUS_API_KEY="your_genius_api_key"
-```
-
-### First Run
-
-1. **Authenticate with Spotify**:
-```bash
-playlist-dl auth login
-
-```
-2. **Check system status**:
-```bash
-playlist-dl doctor
-```
-
-3. **Download a playlist**:
-To get the playlist URL go to the playlist you want to download and click on "Share"
-```bash
-playlist-dl download "PLAYLIST_URL"
-```
-
----
-
-
 ## Usage Guide
 
 ### Basic Commands
@@ -446,11 +341,10 @@ playlist-dl list --show-lyrics
 ### Liked Songs Management
 
 #### Download Your Liked Songs
+**Downloads all your Spotify liked songs to a "My Liked Songs" folder.**
 ```bash
 playlist-dl download-liked
 ```
-
-Downloads all your Spotify liked songs to a "My Liked Songs" folder.
 
 Options:
 - `--format mp3|flac|m4a`: Audio format (default: m4a)
@@ -461,6 +355,7 @@ Options:
 - `--dry-run`: Preview what would be downloaded
 
 #### Sync Liked Songs
+**Synchronizes your liked songs collection, downloading only newly liked tracks since the last sync.**
 ```bash
 playlist-dl sync-liked
 ```
@@ -522,32 +417,7 @@ playlist-dl auth logout
 
 ---
 
-## Configuration
-
-### Configuration File
-
-The application uses a YAML configuration file located at `~/.playlist-downloader/config.yaml`:
-Make sure to edit it by inserting your Client ID and Client Secret
-```yaml
-spotify:
-  client_id: "YOUR CLIENT ID"
-  client_secret: "YOUR CLIENT SECRET"
-```
-
----
-
-## File Organization
-
-```
-~/Music/Playlist Downloads/
-└── My Awesome Playlist/
-    ├── tracklist.txt                    # Sync tracking file
-    ├── 01 - Artist - Song Title.m4a     # Audio files
-    ├── 01 - Artist - Song Title.lrc     # Synchronized lyrics
-    └── ...
-```
-
-### Tracklist Format
+## Tracklist Format
 
 The `tracklist.txt` file tracks sync status:
 
@@ -613,17 +483,6 @@ chmod +x download_playlists.sh
 ./download_playlists.sh
 ```
 
-### Custom Output Structure
-
-```bash
-# Download to specific directory with custom format
-playlist-dl download "PLAYLIST_URL" \
-    --output "/media/music/playlists" \
-    --format flac \
-    --quality high \
-    --concurrent 5
-```
-
 ### Sync Scheduling
 
 Set up automatic sync with cron:
@@ -649,8 +508,11 @@ crontab -e
 | Format | Compression | Quality | File Size | Compatibility |
 |--------|-------------|---------|-----------|---------------|
 | MP3 | Lossy | Good | Small | Universal |
-| M4A/AAC | Lossy | Better | Medium | High |
+| M4A | Lossy | Better | Medium | High |
 | FLAC | Lossless | Perfect | Large | Medium |
+
+**NOTE: The flac is not a real lossless audio format because the source was alredy compressed.**
+**In this case M4A (default) is the best available quality.**
 
 ---
 
@@ -665,68 +527,13 @@ playlist-dl auth logout
 playlist-dl auth login
 ```
 
-#### Missing Dependencies
-```bash
-# Install missing audio processing tools
-# Ubuntu/Debian:
-sudo apt install ffmpeg
-
-# macOS:
-brew install ffmpeg
-
-# Windows (using chocolatey):
-choco install ffmpeg
-```
-
 #### Permission Errors
 ```bash
 # Fix output directory permissions
 chmod 755 ~/Music/Playlist\ Downloads/
 ```
 
-#### Network Issues
-```bash
-# Check system diagnostics
-playlist-dl doctor
-
-# Test with verbose output
-playlist-dl download "PLAYLIST_URL" --verbose
-```
-
 For other issues check the log files. One is created for each playlist:
-
-
----
-
-## Contributing
-
-### Development Setup
-
-1. **Clone and install in development mode**:
-```bash
-git clone https://github.com/playlist-downloader/playlist-downloader.git
-cd playlist-downloader
-```
-
-### Architecture Overview
-
-```
-src/
-├── config/          # Configuration management
-├── spotify/         # Spotify API integration
-├── ytmusic/         # YouTube Music search/download
-├── lyrics/          # Multi-source lyrics system
-├── audio/           # Audio processing and metadata
-├── sync/            # Synchronization logic
-├── utils/           # Utilities and helpers
-└── main.py          # CLI interface
-```
-
-### Adding New Features
-
-1. **New Lyrics Provider**: Implement in `src/lyrics/`
-2. **Audio Format**: Extend `src/audio/processor.py`
-3. **CLI Commands**: Add to `src/main.py`
 
 ---
 
@@ -766,18 +573,16 @@ The developers are not responsible for any misuse of this software.
 
 ---
 
-## 🗺️ Roadmap
+## Roadmap
 
 ### Upcoming Features
 
-- [ ] **Playlist Collaboration**: Shared playlist management
-- [ ] **Smart Playlists**: Auto-updating based on criteria  
+- [ ] **Discovery Weakly**: Update the Discovery Weakly playlist diferently
 - [ ] **Web Interface**: Browser-based GUI
 - [ ] **Mobile App**: iOS/Android companion
 - [ ] **Cloud Sync**: Cross-device synchronization
 - [ ] **Advanced Lyrics**: Karaoke mode and vocal removal
 - [ ] **Metadata Enhancement**: MusicBrainz integration
-- [ ] **Format Conversion**: Built-in audio conversion tools
 
 ### Version History
 
