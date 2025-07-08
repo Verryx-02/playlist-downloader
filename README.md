@@ -567,8 +567,8 @@ The developers are not responsible for any misuse of this software.
 ## Support
 
 - **Documentation**: Check this README and inline help (`playlist-dl --help`)
-- **Issues**: Report bugs on [GitHub Issues](https://github.com/playlist-downloader/playlist-downloader/issues)
-- **Discussions**: Join conversations on [GitHub Discussions](https://github.com/playlist-downloader/playlist-downloader/discussions)
+- **Issues**: Report bugs on [GitHub Issues](https://github.com/Verryx-02/playlist-downloader/issues)
+
 
 ---
 
@@ -577,6 +577,7 @@ The developers are not responsible for any misuse of this software.
 ### Upcoming Features
 
 - [ ] **Discovery Weakly**: Update the Discovery Weakly playlist diferently
+- [ ] **Yt-Music playlist download:** Without going through Spotify
 - [ ] **Web Interface**: Browser-based GUI
 - [ ] **Mobile App**: iOS/Android companion
 - [ ] **Cloud Sync**: Cross-device synchronization

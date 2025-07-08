@@ -9,7 +9,7 @@ set -e  # Exit on any error
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
+BLUE='\033[1;34m'
 PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
@@ -100,17 +100,13 @@ check_unzip() {
     fi
 }
 
-# Check if expect is available for SSH tunnel automation
-check_expect() {
-    if ! command_exists expect; then
-        print_info "Installing expect for SSH tunnel automation..."
-        brew install expect
-        
-        if ! command_exists expect; then
-            print_error "Failed to install expect"
-            exit 1
-        fi
+# Check SSH connectivity (no longer need expect)
+check_ssh() {
+    if ! command_exists ssh; then
+        print_error "SSH not found. SSH is required for tunnel setup."
+        exit 1
     fi
+    print_info "SSH available for tunnel automation"
 }
 
 # Install Homebrew
@@ -189,50 +185,57 @@ install_ffmpeg() {
     fi
 }
 
-# Download and setup project
+# Setup project directory and download files
 setup_project() {
     print_step "Setting up Playlist-Downloader project..."
     
-    # Remove existing directory if it exists
+    # Check if directory already exists
     if [ -d "$INSTALL_DIR" ]; then
         print_warning "Existing installation found at $INSTALL_DIR"
-        read -p "Do you want to remove it and reinstall? (y/N): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            rm -rf "$INSTALL_DIR"
-            print_info "Removed existing installation"
-        else
-            print_info "Using existing installation directory"
-            cd "$INSTALL_DIR"
-            return 0
-        fi
+        
+        while true; do
+            read -p "Do you want to remove it and reinstall? (y/N): " yn
+            case $yn in
+                [Yy]* ) 
+                    print_info "Removing existing installation..."
+                    rm -rf "$INSTALL_DIR"
+                    break
+                    ;;
+                [Nn]* | "" ) 
+                    print_info "Using existing installation directory"
+                    cd "$INSTALL_DIR"
+                    return 0
+                    ;;
+                * ) echo "Please answer yes or no.";;
+            esac
+        done
     fi
     
-    # Create installation directory
+    # Create directory
     mkdir -p "$INSTALL_DIR"
     cd "$INSTALL_DIR"
     
-    # Download repository as ZIP
-    print_info "Downloading repository from $REPO_URL..."
-    local zip_url="${REPO_URL}/archive/refs/heads/main.zip"
+    # Download project
+    print_info "Downloading project from GitHub..."
     local zip_file="playlist-downloader.zip"
     
-    if ! curl -L -o "$zip_file" "$zip_url"; then
-        print_error "Failed to download repository"
+    if ! curl -L -o "$zip_file" "$REPO_URL/archive/refs/heads/main.zip"; then
+        print_error "Failed to download project"
+        print_info "You can download manually from: $REPO_URL"
         exit 1
     fi
     
-    # Extract ZIP
+    # Extract files
     print_info "Extracting project files..."
     if ! unzip -q "$zip_file"; then
-        print_error "Failed to extract repository"
+        print_error "Failed to extract project files"
         exit 1
     fi
     
     # Move files from subdirectory to current directory
     local extracted_dir="playlist-downloader-main"
     if [ -d "$extracted_dir" ]; then
-        mv "$extracted_dir"/* .
+        mv "$extracted_dir"/* . 2>/dev/null || true
         mv "$extracted_dir"/.[^.]* . 2>/dev/null || true  # Move hidden files, ignore errors
         rmdir "$extracted_dir"
     fi
@@ -266,69 +269,45 @@ setup_virtual_environment() {
         echo ""
         
         while true; do
-            read -p "Do you want to keep the existing virtual environment? (y/N): " -n 1 -r
-            echo
-            
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                print_info "Keeping existing virtual environment"
-                
-                # Verify the existing environment works
-                if [ -f ".venv/bin/activate" ]; then
-                    source .venv/bin/activate
-                    
-                    # Test if Python works and has basic packages
-                    if python3 -c "import sys; print(f'Python {sys.version}')" 2>/dev/null; then
+            read -p "Do you want to keep the existing virtual environment? (y/N): " yn
+            case $yn in
+                [Yy]* ) 
+                    print_info "Keeping existing virtual environment"
+                    # Test if the environment works
+                    if source .venv/bin/activate && python3 --version; then
                         print_success "Existing virtual environment is functional"
-                        
-                        # Check if requirements are installed
-                        if pip list | grep -q "spotipy\|yt-dlp\|mutagen" 2>/dev/null; then
-                            print_info "Core packages appear to be installed"
-                            print_info "Will verify and update dependencies if needed..."
-                            return 0
-                        else
-                            print_warning "Core packages not found, will install dependencies"
-                            return 0
-                        fi
+                        return 0
                     else
-                        print_error "Existing virtual environment appears corrupted"
-                        print_info "Will recreate the environment..."
+                        print_warning "Existing environment seems broken, recreating..."
                         rm -rf .venv
+                        break
                     fi
-                else
-                    print_error "Existing virtual environment is invalid"
-                    print_info "Will recreate the environment..."
+                    ;;
+                [Nn]* | "" ) 
+                    print_info "Removing and recreating virtual environment..."
                     rm -rf .venv
-                fi
-                break
-            elif [[ $REPLY =~ ^[Nn]$ ]] || [[ $REPLY == "" ]]; then
-                print_info "Removing existing virtual environment"
-                rm -rf .venv
-                break
-            else
-                echo -e "${RED}Please answer y (yes) or n (no)${NC}"
-            fi
+                    break
+                    ;;
+                * ) echo "Please answer yes or no.";;
+            esac
         done
     fi
     
-    # Create new virtual environment if needed
-    if [ ! -d ".venv" ]; then
-        print_info "Creating new virtual environment..."
-        python3 -m venv .venv
-        
-        if [ ! -d ".venv" ] || [ ! -f ".venv/bin/activate" ]; then
-            print_error "Failed to create virtual environment"
-            exit 1
-        fi
-    fi
+    # Create new virtual environment
+    print_info "Creating Python virtual environment..."
+    python3 -m venv .venv
     
     # Activate virtual environment
     source .venv/bin/activate
     
-    # Upgrade pip
-    print_info "Upgrading pip..."
-    pip install --upgrade pip --quiet
-    
-    print_success "Virtual environment ready"
+    # Verify activation
+    if [[ "$VIRTUAL_ENV" != "" ]]; then
+        print_success "Virtual environment created and activated"
+        python3 --version
+    else
+        print_error "Failed to activate virtual environment"
+        exit 1
+    fi
 }
 
 # Install Python dependencies
@@ -338,45 +317,18 @@ install_dependencies() {
     cd "$INSTALL_DIR"
     source .venv/bin/activate
     
-    # Check if requirements.txt exists
-    if [ ! -f "requirements.txt" ]; then
-        print_error "requirements.txt not found"
-        exit 1
-    fi
+    # Upgrade pip first (suppress output to avoid broken pipe)
+    python3 -m pip install --upgrade pip setuptools wheel >/dev/null 2>&1
     
-    # Check if main packages are already installed
-    local packages_installed=true
-    local core_packages=("spotipy" "yt-dlp" "mutagen" "click" "pyyaml")
-    
-    for package in "${core_packages[@]}"; do
-        if ! pip list | grep -q "^$package " 2>/dev/null; then
-            packages_installed=false
-            break
-        fi
-    done
-    
-    if [ "$packages_installed" = true ]; then
-        print_info "Core packages already installed"
-        
-        # Ask if user wants to update/reinstall
-        echo ""
-        read -p "Do you want to update/reinstall dependencies? (y/N): " -n 1 -r
-        echo
-        
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            print_info "Updating dependencies..."
-            pip install -r requirements.txt --upgrade --quiet
-        else
-            print_info "Skipping dependency installation"
-        fi
+    # Install requirements (suppress output to avoid broken pipe)
+    if [ -f "requirements.txt" ]; then
+        pip install -r requirements.txt >/dev/null 2>&1
     else
-        print_info "Installing missing dependencies..."
-        pip install -r requirements.txt --quiet
+        pip install spotipy yt-dlp mutagen pyyaml requests beautifulsoup4 >/dev/null 2>&1
     fi
     
-    # Always try to install the package itself
-    print_info "Installing/updating Playlist-Downloader..."
-    pip install -e . --quiet
+    # Install the package in development mode with new setup method
+    pip install --use-pep517 -e . >/dev/null 2>&1
     
     print_success "Dependencies ready"
 }
@@ -415,120 +367,347 @@ verify_installation() {
     print_success "All dependencies verified"
 }
 
+# Extract URL from SSH output
+extract_tunnel_url() {
+    local output="$1"
+    local url=""
+    
+    # Method 1: Look for the specific "tunneled with tls termination" pattern
+    # This matches lines like: "0e0838e2fec5d5.lhr.life tunneled with tls termination, https://0e0838e2fec5d5.lhr.life"
+    if [[ "$output" =~ [a-z0-9]+\.lhr\.life\ tunneled\ with\ tls\ termination,\ (https://[a-z0-9]+\.lhr\.life) ]]; then
+        url="${BASH_REMATCH[1]}"
+        echo "$url"
+        return 0
+    fi
+    
+    # Method 2: Alternative pattern for localhost.run domains
+    if [[ "$output" =~ [a-z0-9]+\.localhost\.run\ tunneled\ with\ tls\ termination,\ (https://[a-z0-9]+\.localhost\.run) ]]; then
+        url="${BASH_REMATCH[1]}"
+        echo "$url"
+        return 0
+    fi
+    
+    # Method 3: Fallback - look for any tunnel URL but NOT admin/docs URLs
+    # Exclude admin.localhost.run, localhost.run/docs, etc.
+    if [[ "$output" =~ (https://[a-z0-9]+\.lhr\.life) ]] && [[ ! "${BASH_REMATCH[1]}" =~ admin|docs|twitter ]]; then
+        url="${BASH_REMATCH[1]}"
+        echo "$url"
+        return 0
+    fi
+    
+    # Method 4: Fallback for localhost.run but exclude admin URLs
+    if [[ "$output" =~ (https://[a-z0-9]+\.localhost\.run) ]] && [[ ! "${BASH_REMATCH[1]}" =~ admin|docs ]]; then
+        url="${BASH_REMATCH[1]}"
+        echo "$url"
+        return 0
+    fi
+    
+    return 1
+}
+
+# Attempt SSH tunnel with robust monitoring
+attempt_ssh_tunnel() {
+    local attempt_num="$1"
+    local timeout_seconds="$2"
+    local output_file="/tmp/ssh_tunnel_output_${attempt_num}.log"
+    
+    # Clean up any existing SSH processes
+    pkill -f "ssh -R 80:localhost:8080 nokey@localhost.run" 2>/dev/null || true
+    sleep 1
+    
+    # Remove old output file
+    rm -f "$output_file"
+    
+    # Start SSH tunnel in background
+    ssh -R 80:localhost:8080 nokey@localhost.run > "$output_file" 2>&1 &
+    local ssh_pid=$!
+    
+    # Monitor output for specified timeout
+    local counter=0
+    local max_iterations=$((timeout_seconds * 10))  # Check every 0.1 seconds
+    
+    while [ $counter -lt $max_iterations ]; do
+        # Check if SSH process is still running
+        if ! kill -0 $ssh_pid 2>/dev/null; then
+            break
+        fi
+        
+        # Check if output file exists and has content
+        if [ -f "$output_file" ]; then
+            local output_content=$(cat "$output_file" 2>/dev/null || echo "")
+            
+            # Look for successful tunnel establishment
+            if [[ "$output_content" =~ tunneled\ with\ tls\ termination ]] || 
+               [[ "$output_content" =~ [a-z0-9]+\.lhr\.life ]] ||
+               [[ "$output_content" =~ [a-z0-9]+\.localhost\.run ]]; then
+                
+                # Extract URL
+                local tunnel_url=$(extract_tunnel_url "$output_content")
+                if [ -n "$tunnel_url" ]; then
+                    # DO NOT kill SSH process - keep it running for authentication
+                    # Clean up output file  
+                    rm -f "$output_file"
+                    
+                    # Return URL and PID (separated by |)
+                    echo "$tunnel_url|$ssh_pid"
+                    return 0
+                fi
+            fi
+            
+            # Check for connection errors
+            if [[ "$output_content" =~ "Connection refused" ]] ||
+               [[ "$output_content" =~ "Could not resolve hostname" ]] ||
+               [[ "$output_content" =~ "Network is unreachable" ]]; then
+                break
+            fi
+        fi
+        
+        sleep 0.1
+        ((counter++))
+    done
+    
+    # Timeout or error occurred, clean up
+    kill $ssh_pid 2>/dev/null || true
+    wait $ssh_pid 2>/dev/null || true
+    
+    # Clean up output file
+    rm -f "$output_file"
+    
+    return 1
+}
+
 # Setup SSH tunnel and automatically capture URL
 setup_ssh_tunnel() {
-    print_step "Setting up SSH tunnel and capturing callback URL..."
+    # All messages go to stderr to avoid mixing with return value
+    echo -e "${CYAN}[STEP]${NC} Setting up SSH tunnel and capturing callback URL..." >&2
     
-    print_info "Starting automated SSH tunnel to localhost.run..."
-    print_info "This may take a few seconds..."
+    local tunnel_result=""
+    local max_attempts=3
+    local timeouts=(15 25 35)  # Increasing timeouts for each attempt
     
-    # Create expect script for SSH tunnel automation
-    local expect_script="/tmp/ssh_tunnel_auto.exp"
+    # Try multiple attempts with increasing timeouts
+    for i in $(seq 1 $max_attempts); do
+        tunnel_result=$(attempt_ssh_tunnel $i ${timeouts[$((i-1))]})
+        
+        if [ -n "$tunnel_result" ]; then
+            echo -e "${GREEN}[SUCCESS]${NC} SSH tunnel established successfully on attempt $i" >&2
+            break
+        fi
+        
+        if [ $i -lt $max_attempts ]; then
+            echo -e "${YELLOW}[WARNING]${NC} Attempt $i failed, retrying in 3 seconds..." >&2
+            sleep 3
+        fi
+    done
     
-    cat > "$expect_script" << 'EXPECT_EOF'
-#!/usr/bin/expect -f
-
-set timeout 60
-log_user 0
-
-spawn ssh -R 80:localhost:8080 nokey@localhost.run
-
-set tunnel_url ""
-
-expect {
-    -re "(https://[a-zA-Z0-9]+\.lhr\.life)" {
-        set tunnel_url $expect_out(1,string)
-        puts "CAPTURED_URL:$tunnel_url"
-        exp_continue
-    }
-    -re "(https://[a-zA-Z0-9]+\.localhost\.run)" {
-        set tunnel_url $expect_out(1,string)
-        puts "CAPTURED_URL:$tunnel_url"
-        exp_continue
-    }
-    "Connected to localhost.run" {
-        exp_continue
-    }
-    timeout {
-        puts "TUNNEL_ERROR:Timeout waiting for tunnel URL"
-        exit 1
-    }
-    eof {
-        if {$tunnel_url ne ""} {
-            puts "CAPTURED_URL:$tunnel_url"
-            exit 0
-        } else {
-            puts "TUNNEL_ERROR:Connection closed without URL"
-            exit 1
-        }
-    }
-}
-
-sleep 3
-
-if {$tunnel_url ne ""} {
-    puts "CAPTURED_URL:$tunnel_url"
-    exit 0
-} else {
-    puts "TUNNEL_ERROR:No URL found"
-    exit 1
-}
-EXPECT_EOF
-    
-    chmod +x "$expect_script"
-    
-    # Run expect script and capture output
-    local tunnel_output
-    tunnel_output=$("$expect_script" 2>&1)
-    
-    # Extract URL from output
-    if [[ "$tunnel_output" =~ CAPTURED_URL:(https://[^[:space:]]+) ]]; then
-        local tunnel_url="${BASH_REMATCH[1]}"
+    if [[ -n "$tunnel_result" ]]; then
+        # Parse tunnel_url and ssh_pid from result
+        local tunnel_url=$(echo "$tunnel_result" | cut -d'|' -f1)
+        local ssh_pid=$(echo "$tunnel_result" | cut -d'|' -f2)
         local callback_url="${tunnel_url}/callback"
         
-        print_success "SSH tunnel URL captured: $tunnel_url"
-        print_success "Callback URL generated: $callback_url"
-        
-        # Kill any remaining SSH processes
-        pkill -f "ssh -R 80:localhost:8080" 2>/dev/null || true
-        
-        # Save URLs to files for reference
-        echo "$tunnel_url" > "$INSTALL_DIR/tunnel_url.txt"
-        echo "$callback_url" > "$INSTALL_DIR/callback_url.txt"
+        echo -e "${GREEN}[SUCCESS]${NC} Callback URL generated: $callback_url" >&2
         
         # Update config file automatically
-        update_config_file "$callback_url"
+        update_config_file "$callback_url" >&2
         
-        echo ""
-        echo -e "${GREEN} SSH tunnel setup completed automatically!${NC}"
-        echo -e "${CYAN}Tunnel URL: $tunnel_url${NC}"
-        echo -e "${CYAN}Callback URL: $callback_url${NC}"
-        echo -e "${BLUE}URLs saved to: $INSTALL_DIR/tunnel_url.txt and callback_url.txt${NC}"
-        echo ""
+        echo "" >&2
+        echo -e "${GREEN}SSH tunnel setup completed!${NC}" >&2
+        echo "" >&2
         
-        # Clean up
-        rm -f "$expect_script"
+        # Return ONLY ssh_pid to stdout
+        echo "$ssh_pid"
         return 0
     else
-        print_error "Failed to automatically capture SSH tunnel URL"
-        print_info "Output received: $tunnel_output"
-        print_warning "You'll need to set up the SSH tunnel manually"
-        
-        echo ""
-        echo -e "${YELLOW}Manual SSH tunnel setup:${NC}"
-        echo -e "${BLUE}1. Run in a separate terminal: ssh -R 80:localhost:8080 nokey@localhost.run${NC}"
-        echo -e "${BLUE}2. Copy the generated URL${NC}"
-        echo -e "${BLUE}3. Add '/callback' to the end${NC}"
-        echo -e "${BLUE}4. Update config/config.yaml with your callback URL${NC}"
-        echo ""
-        
-        # Clean up
-        rm -f "$expect_script"
+        echo -e "${RED}[ERROR]${NC} All SSH tunnel attempts failed" >&2
         return 1
     fi
 }
 
-# Update config file with callback URL
+# Update config file with output directory
+update_output_directory() {
+    local config_file="$INSTALL_DIR/config/config.yaml"
+    local output_dir="$HOME/Desktop/Playlist_Downloads"
+    
+    print_step "Updating output directory configuration..."
+    
+    if [ ! -f "$config_file" ]; then
+        return 1
+    fi
+    
+    # Create backup
+    cp "$config_file" "$config_file.backup"
+    
+    # Use sed to update output directory while preserving formatting and comments
+    local temp_file="/tmp/config_output_dir.yaml"
+    cp "$config_file" "$temp_file"
+    
+    # Update output_directory if it exists
+    if grep -q "^[[:space:]]*output_directory:" "$temp_file"; then
+        sed -i.bak "s|^[[:space:]]*output_directory:.*|  output_directory: \"$output_dir\"|" "$temp_file"
+    else
+        # Add output_directory to download section
+        sed -i.bak "/^download:/a\\
+  output_directory: \"$output_dir\"" "$temp_file"
+    fi
+    
+    # Clean up sed backup files
+    rm -f "$temp_file.bak"
+    
+    # Verify the update worked
+    if grep -q "output_directory:" "$temp_file"; then
+        mv "$temp_file" "$config_file"
+        print_success "Output directory set to: $output_dir"
+        rm -f "$config_file.backup"
+        return 0
+    else
+        mv "$config_file.backup" "$config_file"
+        rm -f "$temp_file"
+        return 1
+    fi
+}
+
+# Close SSH tunnel after authentication
+close_ssh_tunnel() {
+    local ssh_pid="$1"
+    
+    if [ -n "$ssh_pid" ]; then
+        print_info "Closing SSH tunnel (PID: $ssh_pid)..."
+        kill $ssh_pid 2>/dev/null || true
+        wait $ssh_pid 2>/dev/null || true
+        print_success "SSH tunnel closed"
+    fi
+}
+
+# Collect Spotify credentials from user
+collect_spotify_credentials() {
+    # All output goes to stderr except the final return value
+    echo "" >&2
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}" >&2
+    echo -e "${YELLOW}Spotify Configuration${NC}" >&2
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}" >&2
+    echo "" >&2
+    echo -e "${BLUE}Please provide your Spotify App credentials:${NC}" >&2
+    echo -e "${PURPLE}(You can get these from: https://developer.spotify.com/dashboard)${NC}" >&2
+    echo "" >&2
+    
+    # Get Client ID
+    while true; do
+        echo -n "Enter your Spotify Client ID: " >&2
+        read client_id
+        if [ -n "$client_id" ] && [ ${#client_id} -ge 10 ]; then
+            break
+        else
+            echo -e "${RED}Client ID seems too short. Please enter a valid Client ID.${NC}" >&2
+        fi
+    done
+    
+    # Get Client Secret
+    while true; do
+        echo -n "Enter your Spotify Client Secret: " >&2
+        read client_secret
+        if [ -n "$client_secret" ] && [ ${#client_secret} -ge 10 ]; then
+            break
+        else
+            echo -e "${RED}Client Secret seems too short. Please enter a valid Client Secret.${NC}" >&2
+        fi
+    done
+    
+    echo "" >&2
+    echo -e "${GREEN}Credentials received!${NC}" >&2
+    echo -e "${BLUE}Client ID: ${client_id:0:8}...${NC}" >&2
+    echo -e "${BLUE}Client Secret: ${client_secret:0:8}...${NC}" >&2
+    echo "" >&2
+    
+    # Return ONLY the credentials (to stdout)
+    echo "$client_id|$client_secret"
+}
+
+# Update config file with Spotify credentials
+update_spotify_credentials() {
+    local client_id="$1"
+    local client_secret="$2"
+    local config_file="$INSTALL_DIR/config/config.yaml"
+    
+    print_step "Updating configuration file with Spotify credentials..."
+    
+    if [ ! -f "$config_file" ]; then
+        print_error "Config file not found at $config_file"
+        return 1
+    fi
+    
+    # Create backup
+    cp "$config_file" "$config_file.backup"
+    
+    # Use sed to update credentials while preserving formatting and comments
+    local temp_file="/tmp/config_update.yaml"
+    cp "$config_file" "$temp_file"
+    
+    # Update client_id if it exists
+    if grep -q "^[[:space:]]*client_id:" "$temp_file"; then
+        sed -i.bak "s/^[[:space:]]*client_id:.*/  client_id: \"$client_id\"/" "$temp_file"
+    else
+        # Add client_id to spotify section
+        sed -i.bak "/^spotify:/a\\
+  client_id: \"$client_id\"" "$temp_file"
+    fi
+    
+    # Update client_secret if it exists
+    if grep -q "^[[:space:]]*client_secret:" "$temp_file"; then
+        sed -i.bak "s/^[[:space:]]*client_secret:.*/  client_secret: \"$client_secret\"/" "$temp_file"
+    else
+        # Add client_secret to spotify section
+        sed -i.bak "/^[[:space:]]*client_id:/a\\
+  client_secret: \"$client_secret\"" "$temp_file"
+    fi
+    
+    # Clean up sed backup files
+    rm -f "$temp_file.bak"
+    
+    # Verify the update worked
+    if grep -q "client_id:" "$temp_file" && grep -q "client_secret:" "$temp_file"; then
+        mv "$temp_file" "$config_file"
+        print_success "Spotify credentials updated in config file"
+        rm -f "$config_file.backup"
+        return 0
+    else
+        print_error "Failed to update Spotify credentials"
+        mv "$config_file.backup" "$config_file"
+        rm -f "$temp_file"
+        return 1
+    fi
+}
+
+# Perform automatic Spotify login
+perform_spotify_login() {
+    print_step "Performing Spotify authentication..."
+    
+    cd "$INSTALL_DIR"
+    source .venv/bin/activate
+    
+    echo ""
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${YELLOW}Starting Spotify Authentication${NC}"
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "${BLUE}The browser will open automatically for Spotify login...${NC}"
+    echo -e "${PURPLE}Follow the instructions in your browser to complete authentication.${NC}"
+    echo ""
+    
+    # Run the login command
+    if playlist-dl auth login; then
+        echo ""
+        echo -e "${GREEN}Spotify authentication completed successfully!${NC}"
+        echo ""
+        return 0
+    else
+        echo ""
+        echo -e "${RED}Spotify authentication failed${NC}"
+        echo -e "${YELLOW}You may need to run 'playlist-dl auth login' manually later${NC}"
+        echo ""
+        return 1
+    fi
+}
 update_config_file() {
     local callback_url="$1"
     local config_file="$INSTALL_DIR/config/config.yaml"
@@ -547,94 +726,73 @@ update_config_file() {
         fi
     fi
     
-    # Update the redirect_url field using sed
+    # Update the redirect_url field using a more robust approach
     if command_exists sed; then
         # Create backup
         cp "$config_file" "$config_file.backup"
         
-        # Update redirect_url field
+        # Use a temporary file to avoid sed issues with special characters
+        local temp_file="/tmp/config_temp.yaml"
+        
+        # Check if redirect_url field exists
         if grep -q "redirect_url:" "$config_file"; then
-            # Field exists, replace it
-            if sed -i.tmp "s|redirect_url:.*|redirect_url: \"$callback_url\"|g" "$config_file"; then
-                rm -f "$config_file.tmp"
-                print_success "Updated redirect_url in config.yaml"
+            # Field exists, replace it using awk (more robust than sed for this)
+            awk -v url="$callback_url" '
+                /^[[:space:]]*redirect_url:/ { 
+                    sub(/redirect_url:.*/, "redirect_url: \"" url "\"")
+                }
+                { print }
+            ' "$config_file" > "$temp_file"
+            
+            if [ -f "$temp_file" ] && [ -s "$temp_file" ]; then
+                mv "$temp_file" "$config_file"
+                print_success "Config file updated with callback URL"
             else
-                print_error "Failed to update config file"
+                print_warning "Failed to update config file automatically"
                 mv "$config_file.backup" "$config_file"
+                rm -f "$temp_file"
                 return 1
             fi
         else
-            print_warning "redirect_url field not found in config file"
-            return 1
+            # Field doesn't exist, add it
+            echo "redirect_url: \"$callback_url\"" >> "$config_file"
+            print_success "Added callback URL to config file"
         fi
         
-        # Remove backup if successful
+        # Clean up backup if successful
         rm -f "$config_file.backup"
-        
-        print_info "Configuration file updated successfully"
-        print_info "Location: $config_file"
-        
     else
-        print_error "sed command not available for config update"
+        print_warning "sed and awk not available, cannot update config file automatically"
+        print_info "Please manually update $config_file with:"
+        print_info "redirect_url: \"$callback_url\""
         return 1
     fi
 }
 
 # Activate environment and show ready message
 activate_environment() {
-    print_step "Activating Python environment..."
-    
     cd "$INSTALL_DIR"
-    
-    # Create activation command for the user
-    echo ""
-    echo -e "${GREEN} Playlist-Downloader is ready! ${NC}"
-    echo ""
-    echo -e "${CYAN}To use Playlist-Downloader:${NC}"
-    echo -e "1. Open a new terminal"
-    echo -e "2. Run these commands:"
-    echo ""
-    echo -e "${BLUE}cd $INSTALL_DIR${NC}"
-    echo -e "${BLUE}source .venv/bin/activate${NC}"
-    echo ""
-    echo -e "${CYAN}Then you can use all playlist-dl commands!${NC}"
-    echo ""
+    source .venv/bin/activate
+    print_success "Virtual environment activated"
 }
 
-# Print final configuration steps
-print_configuration_steps() {
+# Show final success message with activation instructions
+print_final_success() {
     echo ""
-    echo -e "${YELLOW} Final Configuration Steps:${NC}"
+    echo -e "${GREEN}Playlist-Downloader Setup Complete!${NC}"
     echo ""
-    echo -e "${BLUE}1. Configure Spotify API:${NC}"
-    echo -e "   • Go to: ${CYAN}https://developer.spotify.com/dashboard${NC}"
-    echo -e "   • Create new app"
-    
-    if [ -f "$INSTALL_DIR/callback_url.txt" ]; then
-        local saved_url=$(cat "$INSTALL_DIR/callback_url.txt")
-        echo -e "   • Use this redirect URI: ${GREEN}$saved_url${NC}"
-    else
-        echo -e "   • Use your callback URL as redirect URI"
-    fi
-    
-    echo -e "   • Copy Client ID and Client Secret"
+    echo -e "${GREEN}Everything is ready to use!${NC}"
     echo ""
-    echo -e "${BLUE}2. Add your Spotify credentials to config:${NC}"
-    echo -e "   • Edit: ${CYAN}$INSTALL_DIR/config/config.yaml${NC}"
-    echo -e "   • Replace ${YELLOW}\"YOUR CLIENT ID\"${NC} with your actual Client ID"
-    echo -e "   • Replace ${YELLOW}\"YOUR CLIENT SECRET\"${NC} with your actual Client Secret"
-    echo -e "   • ${GREEN} Redirect URL already configured automatically!${NC}"
+    echo -e "${YELLOW}To use Playlist-Downloader:${NC}"
+    echo -e "${CYAN}  cd ~/Desktop/playlist-downloader && source .venv/bin/activate${NC}"
     echo ""
-    echo -e "${BLUE}3. Authenticate with Spotify:${NC}"
-    echo -e "   playlist-dl auth login"
+    echo -e "${BLUE}Then try your first playlist download:${NC}"
+    echo -e "${CYAN}  playlist-dl download \"https://open.spotify.com/playlist/YOUR_PLAYLIST_URL\"${NC}"
     echo ""
-    echo -e "${BLUE}4. Test your first download:${NC}"
-    echo -e "   playlist-dl download \"https://open.spotify.com/playlist/YOUR_PLAYLIST_URL\""
+    echo -e "${PURPLE}For more commands and options:${NC}"
+    echo -e "${CYAN}  playlist-dl --help${NC}"
     echo ""
-    echo -e "${CYAN} For detailed guides, check:${NC}"
-    echo -e "   ${REPO_URL}#readme"
-    echo ""
-    echo -e "${GREEN} Almost ready! Just add your Spotify credentials and you're done! ${NC}"
+    echo -e "${GREEN}Happy downloading!${NC}"
     echo ""
 }
 
@@ -659,7 +817,7 @@ main() {
     # Installation steps
     install_homebrew
     check_curl
-    check_expect
+    check_ssh
     install_python
     install_ffmpeg
     setup_project
@@ -669,17 +827,46 @@ main() {
     
     # Automatic configuration steps
     echo ""
-    echo -e "${GREEN} Installation completed successfully! ${NC}"
+    echo -e "${GREEN}Installation completed successfully!${NC}"
     echo ""
     
-    # Setup SSH tunnel and automatically update config
-    setup_ssh_tunnel
+    # Setup SSH tunnel and automatically update config (keep tunnel running)
+    local ssh_pid=""
+    ssh_pid=$(setup_ssh_tunnel)
     
-    # Activate environment and show ready message
+    if [ $? -ne 0 ]; then
+        print_error "SSH tunnel setup failed. You may need to configure manually."
+        exit 1
+    fi
+    
+    # Activate environment 
     activate_environment
     
-    # Final configuration instructions
-    print_configuration_steps
+    # Update output directory configuration
+    update_output_directory
+    
+    # Collect Spotify credentials from user
+    local credentials=""
+    credentials=$(collect_spotify_credentials)
+    local client_id=$(echo "$credentials" | cut -d'|' -f1)
+    local client_secret=$(echo "$credentials" | cut -d'|' -f2)
+    
+    # Update config file with Spotify credentials
+    if ! update_spotify_credentials "$client_id" "$client_secret"; then
+        print_error "Failed to update Spotify credentials in config file"
+        exit 1
+    fi
+    
+    # Perform automatic Spotify login
+    if ! perform_spotify_login; then
+        print_warning "Automatic login failed, but configuration is complete"
+    fi
+    
+    # Close SSH tunnel after authentication
+    close_ssh_tunnel "$ssh_pid"
+    
+    # Show final success message
+    print_final_success
 }
 
 # Trap errors
