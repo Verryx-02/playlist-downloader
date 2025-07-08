@@ -16,14 +16,14 @@ NC='\033[0m' # No Color
 
 # Configuration
 REPO_URL="https://github.com/verryx-02/playlist-downloader"
-INSTALL_DIR="$HOME/playlist-downloader"
+INSTALL_DIR="$HOME/Desktop/playlist-downloader"
 PYTHON_MIN_VERSION="3.8"
 
 # Helper functions
 print_header() {
     echo ""
     echo -e "${PURPLE}╔═══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${PURPLE}║                    🎵 Playlist-Downloader 🎵                   ║${NC}"
+    echo -e "${PURPLE}║                     Playlist-Downloader                       ║${NC}"
     echo -e "${PURPLE}║                                                               ║${NC}"
     echo -e "${PURPLE}║                 macOS Automatic Installer                     ║${NC}"
     echo -e "${PURPLE}║                                                               ║${NC}"
@@ -500,7 +500,7 @@ EXPECT_EOF
         update_config_file "$callback_url"
         
         echo ""
-        echo -e "${GREEN}✅ SSH tunnel setup completed automatically!${NC}"
+        echo -e "${GREEN} SSH tunnel setup completed automatically!${NC}"
         echo -e "${CYAN}Tunnel URL: $tunnel_url${NC}"
         echo -e "${CYAN}Callback URL: $callback_url${NC}"
         echo -e "${BLUE}URLs saved to: $INSTALL_DIR/tunnel_url.txt and callback_url.txt${NC}"
@@ -588,7 +588,7 @@ activate_environment() {
     
     # Create activation command for the user
     echo ""
-    echo -e "${GREEN}🎵 Playlist-Downloader is ready! 🎵${NC}"
+    echo -e "${GREEN} Playlist-Downloader is ready! ${NC}"
     echo ""
     echo -e "${CYAN}To use Playlist-Downloader:${NC}"
     echo -e "1. Open a new terminal"
@@ -604,7 +604,7 @@ activate_environment() {
 # Print final configuration steps
 print_configuration_steps() {
     echo ""
-    echo -e "${YELLOW}📋 Final Configuration Steps:${NC}"
+    echo -e "${YELLOW} Final Configuration Steps:${NC}"
     echo ""
     echo -e "${BLUE}1. Configure Spotify API:${NC}"
     echo -e "   • Go to: ${CYAN}https://developer.spotify.com/dashboard${NC}"
@@ -623,7 +623,7 @@ print_configuration_steps() {
     echo -e "   • Edit: ${CYAN}$INSTALL_DIR/config/config.yaml${NC}"
     echo -e "   • Replace ${YELLOW}\"YOUR CLIENT ID\"${NC} with your actual Client ID"
     echo -e "   • Replace ${YELLOW}\"YOUR CLIENT SECRET\"${NC} with your actual Client Secret"
-    echo -e "   • ${GREEN}✅ Redirect URL already configured automatically!${NC}"
+    echo -e "   • ${GREEN} Redirect URL already configured automatically!${NC}"
     echo ""
     echo -e "${BLUE}3. Authenticate with Spotify:${NC}"
     echo -e "   playlist-dl auth login"
@@ -631,10 +631,10 @@ print_configuration_steps() {
     echo -e "${BLUE}4. Test your first download:${NC}"
     echo -e "   playlist-dl download \"https://open.spotify.com/playlist/YOUR_PLAYLIST_URL\""
     echo ""
-    echo -e "${CYAN}💡 For detailed guides, check:${NC}"
+    echo -e "${CYAN} For detailed guides, check:${NC}"
     echo -e "   ${REPO_URL}#readme"
     echo ""
-    echo -e "${GREEN}🎵 Almost ready! Just add your Spotify credentials and you're done! 🎵${NC}"
+    echo -e "${GREEN} Almost ready! Just add your Spotify credentials and you're done! ${NC}"
     echo ""
 }
 
@@ -669,7 +669,7 @@ main() {
     
     # Automatic configuration steps
     echo ""
-    echo -e "${GREEN}🎉 Installation completed successfully! 🎉${NC}"
+    echo -e "${GREEN} Installation completed successfully! ${NC}"
     echo ""
     
     # Setup SSH tunnel and automatically update config

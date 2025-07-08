@@ -38,7 +38,7 @@ setup(
     description="Download Spotify playlists locally with YouTube Music integration and lyrics support",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/playlist-downloader/playlist-downloader",
+    url="https://github.com/verryx-02/playlist-downloader",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 4 - Beta",
@@ -91,8 +91,8 @@ setup(
     },
     keywords="spotify youtube music download playlist lyrics cli",
     project_urls={
-        "Bug Reports": "https://github.com/playlist-downloader/playlist-downloader/issues",
-        "Source": "https://github.com/playlist-downloader/playlist-downloader",
-        "Documentation": "https://github.com/playlist-downloader/playlist-downloader/wiki",
+        "Bug Reports": "https://github.com/verryx-02/playlist-downloader/issues",
+        "Source": "https://github.com/verryx-02/playlist-downloader",
+        "Documentation": "https://github.com/verryx-02/playlist-downloader/wiki",
     },
 )
