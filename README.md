@@ -48,6 +48,15 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
 - Spotify API keys
 - Genius API access token (recommended)
 
+### **MacOs Automatica installation:**
+  
+Open the terminal and paste the command below:
+```
+cd ~/Desktop && curl -L -o install-macos.sh https://raw.githubusercontent.com/verryx-02/playlist-downloader/main/scripts/install-macos.sh && chmod +x install-macos.sh && ./install-macos.sh && cd ~/Desktop && rm install-macos.sh && cd playlist-downloader
+```
+
+### **MacOs Manual installation:**
+
 ### **Step 1: Install a Package Manager**
 1. **Install Chocolatey:**
    - Open PowerShell as **Administrator** (Right-click → "Run as administrator")

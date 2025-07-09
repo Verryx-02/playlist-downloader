@@ -47,7 +47,7 @@ lyrics:
   max_attempts: 3                     # Max retry per source
   
   # API Keys (optional for better rate limits)
-  genius_api_key: ""                  # Genius API token
+  genius_api_key: "YOUR GENIUS API TOKEN"
   
   # Advanced lyrics settings
   similarity_threshold: 0.7           # Title/artist similarity threshold
