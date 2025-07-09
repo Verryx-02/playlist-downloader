@@ -4,7 +4,7 @@
 spotify:
   client_id: "YOUR CLIENT ID"
   client_secret: "YOUR CLIENT SECRET"
-  redirect_url: "https://49a9a77ed26762.lhr.life/callback"
+  redirect_url: "YOUR_REDIRECT_URL/callback"
   scope: "playlist-read-private playlist-read-collaborative user-library-read"
 
 download:
