@@ -293,21 +293,18 @@ setup_virtual_environment() {
         done
     fi
     
-    # Create new virtual environment
+    # Create virtual environment
     print_info "Creating Python virtual environment..."
     python3 -m venv .venv
     
     # Activate virtual environment
     source .venv/bin/activate
     
-    # Verify activation
-    if [[ "$VIRTUAL_ENV" != "" ]]; then
-        print_success "Virtual environment created and activated"
-        python3 --version
-    else
-        print_error "Failed to activate virtual environment"
-        exit 1
-    fi
+    # Upgrade pip
+    print_info "Upgrading pip..."
+    pip install --upgrade pip
+    
+    print_success "Virtual environment created and activated"
 }
 
 # Install Python dependencies
@@ -317,20 +314,25 @@ install_dependencies() {
     cd "$INSTALL_DIR"
     source .venv/bin/activate
     
-    # Upgrade pip first (suppress output to avoid broken pipe)
-    python3 -m pip install --upgrade pip setuptools wheel >/dev/null 2>&1
-    
-    # Install requirements (suppress output to avoid broken pipe)
+    # Install requirements
     if [ -f "requirements.txt" ]; then
-        pip install -r requirements.txt >/dev/null 2>&1
+        print_info "Installing packages from requirements.txt..."
+        pip install -r requirements.txt
     else
-        pip install spotipy yt-dlp mutagen pyyaml requests beautifulsoup4 >/dev/null 2>&1
+        print_error "requirements.txt not found"
+        exit 1
     fi
     
-    # Install the package in development mode with new setup method
-    pip install --use-pep517 -e . >/dev/null 2>&1
+    # Install the package in development mode
+    if [ -f "setup.py" ]; then
+        print_info "Installing Playlist-Downloader package..."
+        pip install -e .
+    else
+        print_error "setup.py not found"
+        exit 1
+    fi
     
-    print_success "Dependencies ready"
+    print_success "Dependencies installed successfully"
 }
 
 # Verify installation
@@ -340,124 +342,57 @@ verify_installation() {
     cd "$INSTALL_DIR"
     source .venv/bin/activate
     
-    # Test if playlist-dl command works
-    if playlist-dl --help >/dev/null 2>&1; then
-        print_success "Playlist-Downloader command working"
+    # Check if playlist-dl command is available
+    if command_exists playlist-dl; then
+        print_success "playlist-dl command is available"
+        
+        # Test the command
+        if playlist-dl --version >/dev/null 2>&1; then
+            print_success "Installation verification complete"
+        else
+            print_warning "playlist-dl command found but may not be working correctly"
+        fi
     else
-        print_error "playlist-dl command not working"
+        print_error "playlist-dl command not found"
+        print_info "Installation may have failed"
         exit 1
     fi
-    
-    # Test dependencies
-    local missing_deps=()
-    
-    if ! command_exists ffmpeg; then
-        missing_deps+=("FFmpeg")
-    fi
-    
-    if ! check_python_version; then
-        missing_deps+=("Python ${PYTHON_MIN_VERSION}+")
-    fi
-    
-    if [ ${#missing_deps[@]} -gt 0 ]; then
-        print_error "Missing dependencies: ${missing_deps[*]}"
-        exit 1
-    fi
-    
-    print_success "All dependencies verified"
 }
 
-# Extract URL from SSH output
-extract_tunnel_url() {
-    local output="$1"
-    local url=""
-    
-    # Method 1: Look for the specific "tunneled with tls termination" pattern
-    # This matches lines like: "0e0838e2fec5d5.lhr.life tunneled with tls termination, https://0e0838e2fec5d5.lhr.life"
-    if [[ "$output" =~ [a-z0-9]+\.lhr\.life\ tunneled\ with\ tls\ termination,\ (https://[a-z0-9]+\.lhr\.life) ]]; then
-        url="${BASH_REMATCH[1]}"
-        echo "$url"
-        return 0
-    fi
-    
-    # Method 2: Alternative pattern for localhost.run domains
-    if [[ "$output" =~ [a-z0-9]+\.localhost\.run\ tunneled\ with\ tls\ termination,\ (https://[a-z0-9]+\.localhost\.run) ]]; then
-        url="${BASH_REMATCH[1]}"
-        echo "$url"
-        return 0
-    fi
-    
-    # Method 3: Fallback - look for any tunnel URL but NOT admin/docs URLs
-    # Exclude admin.localhost.run, localhost.run/docs, etc.
-    if [[ "$output" =~ (https://[a-z0-9]+\.lhr\.life) ]] && [[ ! "${BASH_REMATCH[1]}" =~ admin|docs|twitter ]]; then
-        url="${BASH_REMATCH[1]}"
-        echo "$url"
-        return 0
-    fi
-    
-    # Method 4: Fallback for localhost.run but exclude admin URLs
-    if [[ "$output" =~ (https://[a-z0-9]+\.localhost\.run) ]] && [[ ! "${BASH_REMATCH[1]}" =~ admin|docs ]]; then
-        url="${BASH_REMATCH[1]}"
-        echo "$url"
-        return 0
-    fi
-    
-    return 1
-}
-
-# Attempt SSH tunnel with robust monitoring
+# Attempt to setup SSH tunnel with timeout
 attempt_ssh_tunnel() {
-    local attempt_num="$1"
-    local timeout_seconds="$2"
-    local output_file="/tmp/ssh_tunnel_output_${attempt_num}.log"
+    local attempt="$1"
+    local timeout="$2"
+    local output_file="/tmp/ssh_tunnel_output_$$.txt"
     
-    # Clean up any existing SSH processes
-    pkill -f "ssh -R 80:localhost:8080 nokey@localhost.run" 2>/dev/null || true
-    sleep 1
+    print_info "SSH tunnel attempt $attempt (timeout: ${timeout}s)..."
     
-    # Remove old output file
-    rm -f "$output_file"
-    
-    # Start SSH tunnel in background
+    # Start SSH tunnel in background and capture output
     ssh -R 80:localhost:8080 nokey@localhost.run > "$output_file" 2>&1 &
     local ssh_pid=$!
     
-    # Monitor output for specified timeout
+    # Wait for tunnel URL with timeout
     local counter=0
-    local max_iterations=$((timeout_seconds * 10))  # Check every 0.1 seconds
+    local max_counter=$((timeout * 10))  # Check every 0.1 seconds
     
-    while [ $counter -lt $max_iterations ]; do
-        # Check if SSH process is still running
-        if ! kill -0 $ssh_pid 2>/dev/null; then
-            break
-        fi
-        
-        # Check if output file exists and has content
+    while [ $counter -lt $max_counter ]; do
         if [ -f "$output_file" ]; then
-            local output_content=$(cat "$output_file" 2>/dev/null || echo "")
+            local output_content=$(cat "$output_file")
             
-            # Look for successful tunnel establishment
-            if [[ "$output_content" =~ tunneled\ with\ tls\ termination ]] || 
-               [[ "$output_content" =~ [a-z0-9]+\.lhr\.life ]] ||
-               [[ "$output_content" =~ [a-z0-9]+\.localhost\.run ]]; then
+            # Check for tunnel URL
+            if echo "$output_content" | grep -q "https://.*\.lhr\.life"; then
+                local tunnel_url=$(echo "$output_content" | grep -o "https://[^[:space:]]*\.lhr\.life" | head -1)
                 
-                # Extract URL
-                local tunnel_url=$(extract_tunnel_url "$output_content")
                 if [ -n "$tunnel_url" ]; then
-                    # DO NOT kill SSH process - keep it running for authentication
-                    # Clean up output file  
+                    print_success "SSH tunnel established: $tunnel_url"
                     rm -f "$output_file"
-                    
-                    # Return URL and PID (separated by |)
                     echo "$tunnel_url|$ssh_pid"
                     return 0
                 fi
             fi
             
-            # Check for connection errors
-            if [[ "$output_content" =~ "Connection refused" ]] ||
-               [[ "$output_content" =~ "Could not resolve hostname" ]] ||
-               [[ "$output_content" =~ "Network is unreachable" ]]; then
+            # Check for errors
+            if echo "$output_content" | grep -qi "connection.*failed\|could not resolve\|network.*unreachable"; then
                 break
             fi
         fi
@@ -520,6 +455,68 @@ setup_ssh_tunnel() {
         return 0
     else
         echo -e "${RED}[ERROR]${NC} All SSH tunnel attempts failed" >&2
+        return 1
+    fi
+}
+
+# Update config file with callback URL
+update_config_file() {
+    local callback_url="$1"
+    local config_file="$INSTALL_DIR/config/config.yaml"
+    
+    print_step "Updating configuration file with callback URL..."
+    
+    if [ ! -f "$config_file" ]; then
+        # Check for config_example.yaml
+        local example_config="$INSTALL_DIR/config/config_example.yaml"
+        if [ -f "$example_config" ]; then
+            print_info "Copying config_example.yaml to config.yaml..."
+            cp "$example_config" "$config_file"
+        else
+            print_error "No config file found at $config_file"
+            return 1
+        fi
+    fi
+    
+    # Update the redirect_url field using a more robust approach
+    if command_exists sed; then
+        # Create backup
+        cp "$config_file" "$config_file.backup"
+        
+        # Use a temporary file to avoid sed issues with special characters
+        local temp_file="/tmp/config_temp.yaml"
+        
+        # Check if redirect_url field exists
+        if grep -q "redirect_url:" "$config_file"; then
+            # Field exists, replace it using awk (more robust than sed for this)
+            awk -v url="$callback_url" '
+                /^[[:space:]]*redirect_url:/ { 
+                    sub(/redirect_url:.*/, "redirect_url: \"" url "\"")
+                }
+                { print }
+            ' "$config_file" > "$temp_file"
+            
+            if [ -f "$temp_file" ] && [ -s "$temp_file" ]; then
+                mv "$temp_file" "$config_file"
+                print_success "Config file updated with callback URL"
+            else
+                print_warning "Failed to update config file automatically"
+                mv "$config_file.backup" "$config_file"
+                rm -f "$temp_file"
+                return 1
+            fi
+        else
+            # Field doesn't exist, add it
+            echo "redirect_url: \"$callback_url\"" >> "$config_file"
+            print_success "Added callback URL to config file"
+        fi
+        
+        # Clean up backup if successful
+        rm -f "$config_file.backup"
+    else
+        print_warning "sed and awk not available, cannot update config file automatically"
+        print_info "Please manually update $config_file with:"
+        print_info "redirect_url: \"$callback_url\""
         return 1
     fi
 }
@@ -635,15 +632,18 @@ collect_genius_credentials() {
     echo -e "${CYAN}Benefits of using Genius API:${NC}"
     echo -e "${BLUE}• Access to a vast database of accurate lyrics${NC}"
     echo -e "${BLUE}• Higher success rate for finding lyrics${NC}"
+    echo -e "${BLUE}• Better matching algorithm for song lyrics${NC}"
+    echo -e "${BLUE}• Free tier includes 60 requests per hour${NC}"
     echo ""
     echo -e "${CYAN}How to get your Genius API token:${NC}"
     echo -e "${BLUE}1. Go to: ${PURPLE}https://genius.com/api-clients${NC}"
     echo -e "${BLUE}2. Click 'New API Client'${NC}"
     echo -e "${BLUE}3. Fill in basic information (App Name, etc.)${NC}"
-    echo -e "${BLUE}3. Click on Generate Access Token${NC}"
-    echo -e "${BLUE}4. Copy the 'Client Access Token'${NC}"
+    echo -e "${BLUE}4. Click on Generate Access Token${NC}"
+    echo -e "${BLUE}5. Copy the 'Client Access Token'${NC}"
     echo ""
-    echo -e "${GREEN} This step is completely optional. You can skip it and add the token later. But i suggest you to do it now${NC}"
+    echo -e "${GREEN}💡 This step is completely optional. You can skip it and add the token later.${NC}"
+    echo -e "${GREEN}   But I suggest you to do it now for the best experience!${NC}"
     echo ""
     
     local genius_token=""
@@ -658,9 +658,9 @@ collect_genius_credentials() {
             return 0
         fi
         
-        # Basic validation - Genius tokens typically start with underscore and are long
+        # Basic validation - Genius tokens are typically alphanumeric and reasonably long
         if [[ ${#genius_token} -lt 20 ]]; then
-            print_warning "Token seems too short. Genius tokens are usually longer."
+            print_warning "Token seems too short. Genius API tokens are usually at least 20 characters long."
             echo -e "${BLUE}Continue anyway? (y/N):${NC}"
             read -p "" continue_anyway
             case $continue_anyway in
@@ -668,11 +668,23 @@ collect_genius_credentials() {
                 * ) continue ;;
             esac
         else
-            break
+            # Additional check for obviously invalid tokens
+            if [[ "$genius_token" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+                break
+            else
+                print_warning "Token contains invalid characters. Genius tokens should only contain letters, numbers, underscores, and hyphens."
+                echo -e "${BLUE}Continue anyway? (y/N):${NC}"
+                read -p "" continue_anyway
+                case $continue_anyway in
+                    [Yy]* ) break ;;
+                    * ) continue ;;
+                esac
+            fi
         fi
     done
     
     echo "$genius_token"
+}
 
 # Update config file with Spotify credentials
 update_spotify_credentials() {
@@ -820,66 +832,6 @@ perform_spotify_login() {
         return 1
     fi
 }
-update_config_file() {
-    local callback_url="$1"
-    local config_file="$INSTALL_DIR/config/config.yaml"
-    
-    print_step "Updating configuration file with callback URL..."
-    
-    if [ ! -f "$config_file" ]; then
-        # Check for config_example.yaml
-        local example_config="$INSTALL_DIR/config/config_example.yaml"
-        if [ -f "$example_config" ]; then
-            print_info "Copying config_example.yaml to config.yaml..."
-            cp "$example_config" "$config_file"
-        else
-            print_error "No config file found at $config_file"
-            return 1
-        fi
-    fi
-    
-    # Update the redirect_url field using a more robust approach
-    if command_exists sed; then
-        # Create backup
-        cp "$config_file" "$config_file.backup"
-        
-        # Use a temporary file to avoid sed issues with special characters
-        local temp_file="/tmp/config_temp.yaml"
-        
-        # Check if redirect_url field exists
-        if grep -q "redirect_url:" "$config_file"; then
-            # Field exists, replace it using awk (more robust than sed for this)
-            awk -v url="$callback_url" '
-                /^[[:space:]]*redirect_url:/ { 
-                    sub(/redirect_url:.*/, "redirect_url: \"" url "\"")
-                }
-                { print }
-            ' "$config_file" > "$temp_file"
-            
-            if [ -f "$temp_file" ] && [ -s "$temp_file" ]; then
-                mv "$temp_file" "$config_file"
-                print_success "Config file updated with callback URL"
-            else
-                print_warning "Failed to update config file automatically"
-                mv "$config_file.backup" "$config_file"
-                rm -f "$temp_file"
-                return 1
-            fi
-        else
-            # Field doesn't exist, add it
-            echo "redirect_url: \"$callback_url\"" >> "$config_file"
-            print_success "Added callback URL to config file"
-        fi
-        
-        # Clean up backup if successful
-        rm -f "$config_file.backup"
-    else
-        print_warning "sed and awk not available, cannot update config file automatically"
-        print_info "Please manually update $config_file with:"
-        print_info "redirect_url: \"$callback_url\""
-        return 1
-    fi
-}
 
 # Activate environment and show ready message
 activate_environment() {
@@ -895,14 +847,26 @@ print_final_success() {
     echo ""
     echo -e "${GREEN}Everything is ready to use!${NC}"
     echo ""
+    
+    # Check if Genius API is configured
+    if grep -q 'genius_api_key: ".*"' "$INSTALL_DIR/config/config.yaml" 2>/dev/null && ! grep -q 'genius_api_key: ""' "$INSTALL_DIR/config/config.yaml"; then
+        echo -e "${GREEN}🎵 Genius API configured - Enhanced lyrics downloading enabled!${NC}"
+    else
+        echo -e "${BLUE}💡 Optional: Add Genius API token for better lyrics${NC}"
+        echo -e "${CYAN}   Visit: https://genius.com/api-clients${NC}"
+    fi
+    echo ""
+    
     echo -e "${YELLOW}To use Playlist-Downloader:${NC}"
-    echo -e "${CYAN}  source .venv/bin/activate${NC}"
+    echo -e "${CYAN}  cd ~/Desktop/playlist-downloader && source .venv/bin/activate${NC}"
+    echo ""
+    echo -e "${BLUE}Then try your first playlist download:${NC}"
+    echo -e "${CYAN}  playlist-dl download \"https://open.spotify.com/playlist/YOUR_PLAYLIST_URL\"${NC}"
     echo ""
     echo -e "${PURPLE}For more commands and options:${NC}"
     echo -e "${CYAN}  playlist-dl --help${NC}"
     echo ""
-    echo -e "${BLUE}Then try your first playlist download:${NC}"
-    echo -e "${CYAN}  playlist-dl download \"YOUR_PLAYLIST_URL (you can find it sharing your Spotify playlist)\"${NC}"
+    echo -e "${GREEN}Happy downloading!${NC}"
     echo ""
 }
 
@@ -971,17 +935,16 @@ main() {
     local genius_token=""
     genius_token=$(collect_genius_credentials)
     
-    # Basic validation - Genius tokens are typically alphanumeric and reasonably long
-    if [[ ${#genius_token} -lt 20 ]]; then
-        print_warning "Token seems too short. Genius API tokens are usually at least 20 characters long."
-        echo -e "${BLUE}Continue anyway? (y/N):${NC}"
-        read -p "" continue_anyway
-        case $continue_anyway in
-            [Yy]* ) break ;;
-            * ) continue ;;
-        esac
+    if [[ -n "$genius_token" ]]; then
+        if ! update_genius_credentials "$genius_token"; then
+            print_warning "Failed to update Genius API credentials, but continuing installation"
+            print_info "You can manually add your Genius token to config/config.yaml later"
+        else
+            print_success "Genius API configured successfully!"
+            echo -e "${GREEN}🎵 Lyrics downloads will now use Genius API for better accuracy${NC}"
+        fi
     else
-        print_info "To enable Genius lyrics later, add your token to config/config.yaml"
+        print_info "💡 To enable Genius lyrics later, add your token to config/config.yaml"
         print_info "   Visit: https://genius.com/api-clients to get your token"
     fi
     echo ""
