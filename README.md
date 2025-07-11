@@ -93,6 +93,7 @@ This single command will:
 
 You can reed the script [here](https://github.com/Verryx-02/playlist-downloader/blob/main/scripts/install-macos.sh). 
 </details>
+
 ---
 
 <div align="center">
@@ -118,6 +119,7 @@ This single command will:
 - Enter the project directory
 You can reed the script [here](https://github.com/Verryx-02/playlist-downloader/blob/main/scripts/install-windows.ps1). 
 </details>
+
 ---
 
 <div align="center">
