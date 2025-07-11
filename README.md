@@ -128,7 +128,7 @@ You can reed the script [here](https://github.com/Verryx-02/playlist-downloader/
 
 </div>
 
-For the manual installation see this guide 
+For the manual installation see this guide {NOT WRITTEN YET}
 
 ---
 
