@@ -61,7 +61,7 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
 </div>
 
 
-### Prerequisites (Will be installed automatically in a virtual environment if they are not
+### Prerequisites (Will be installed automatically in a virtual environment if they are not)
 
 - Python 3.8+
 - FFmpeg (for audio processing)
