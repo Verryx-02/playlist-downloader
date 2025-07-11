@@ -678,6 +678,173 @@ update_spotify_credentials() {
     fi
 }
 
+# Collect Genius API token from user
+collect_genius_token() {
+    # All output goes to stderr except the final return value
+    echo "" >&2
+    echo -e "${PURPLE}╔═══════════════════════════════════════════════════════════════╗${NC}" >&2
+    echo -e "${PURPLE}║                    Genius API Setup                           ║${NC}" >&2
+    echo -e "${PURPLE}║                                                               ║${NC}" >&2
+    echo -e "${PURPLE}║  This enables high-quality lyrics download for your music     ║${NC}" >&2
+    echo -e "${PURPLE}║                                                               ║${NC}" >&2
+    echo -e "${PURPLE}╚═══════════════════════════════════════════════════════════════╝${NC}" >&2
+    echo "" >&2
+    echo -e "${YELLOW}Genius API Token Setup (Optional but Recommended)${NC}" >&2
+    echo "" >&2
+    echo -e "${BLUE}To get better lyrics for your downloaded tracks:${NC}" >&2
+    echo -e "${CYAN}1. Go to: https://genius.com/api-clients${NC}" >&2
+    echo -e "${CYAN}2. Click 'New API Client'${NC}" >&2
+    echo -e "${CYAN}3. Fill in the form (app name can be anything like 'My Playlist Downloader')${NC}" >&2
+    echo -e "${CYAN}4. Copy the 'Client Access Token' (not Client ID/Secret)${NC}" >&2
+    echo "" >&2
+    
+    while true; do
+        echo -n "Do you want to set up Genius API for lyrics? (y/n): " >&2
+        read setup_genius
+        case $setup_genius in
+            [Yy]* ) 
+                break
+                ;;
+            [Nn]* ) 
+                echo -e "${BLUE}[INFO]${NC} Skipping Genius API setup - you can add it later in config.yaml" >&2
+                echo "SKIP_GENIUS"
+                return 0
+                ;;
+            * ) 
+                echo "Please answer yes or no." >&2
+                ;;
+        esac
+    done
+    
+    local genius_token=""
+    
+    echo "" >&2
+    echo -e "${BLUE}Please enter your Genius API Client Access Token:${NC}" >&2
+    echo -e "${YELLOW}(Token should start with something like 'A7B...' and be about 64 characters)${NC}" >&2
+    echo "" >&2
+    
+    while true; do
+        echo -n "Genius API Token: " >&2
+        read genius_token
+        
+        # Basic validation
+        if [ -z "$genius_token" ]; then
+            echo -e "${RED}Token cannot be empty. Please try again.${NC}" >&2
+            continue
+        fi
+        
+        if [ ${#genius_token} -lt 20 ]; then
+            echo -e "${YELLOW}Token seems too short. Are you sure this is correct? (y/n)${NC}" >&2
+            read -p "" confirm
+            case $confirm in
+                [Yy]* ) break ;;
+                * ) continue ;;
+            esac
+        else
+            break
+        fi
+    done
+    
+    echo "" >&2
+    echo -e "${GREEN}Genius token received!${NC}" >&2
+    echo -e "${BLUE}Token: ${genius_token:0:8}...${NC}" >&2
+    echo "" >&2
+    
+    # Return ONLY the token (to stdout)
+    echo "$genius_token"
+}
+
+# Update config file with Genius credentials
+update_genius_credentials() {
+    local genius_token="$1"
+    local config_file="$INSTALL_DIR/config/config.yaml"
+    
+    print_step "Updating Genius API configuration..."
+    
+    if [ ! -f "$config_file" ]; then
+        print_error "Config file not found at $config_file"
+        return 1
+    fi
+    
+    # Create backup
+    cp "$config_file" "$config_file.genius_backup"
+    
+    # Find the line number of genius_api_key
+    local line_number=""
+    line_number=$(grep -n "genius_api_key:" "$config_file" | cut -d: -f1)
+    
+    if [ -n "$line_number" ]; then
+        # genius_api_key field exists, replace it using head/tail approach
+        local temp_file="/tmp/config_genius_temp.yaml"
+        
+        # Get lines before the target line
+        head -n $((line_number - 1)) "$config_file" > "$temp_file"
+        
+        # Add our new line (create it safely without sed)
+        echo "  genius_api_key: \"$genius_token\"" >> "$temp_file"
+        
+        # Get lines after the target line
+        tail -n +$((line_number + 1)) "$config_file" >> "$temp_file"
+        
+        # Verify the update worked by checking if our line is there
+        if grep -q "genius_api_key:" "$temp_file"; then
+            mv "$temp_file" "$config_file"
+            print_success "Updated Genius API key in config file"
+            rm -f "$config_file.genius_backup"
+            print_success "Genius API configuration completed"
+            return 0
+        else
+            print_warning "Failed to update Genius API key"
+            mv "$config_file.genius_backup" "$config_file"
+            rm -f "$temp_file"
+            return 1
+        fi
+    else
+        # genius_api_key field doesn't exist
+        if grep -q "^lyrics:" "$config_file"; then
+            # Add genius_api_key to existing lyrics section
+            local lyrics_line=""
+            lyrics_line=$(grep -n "^lyrics:" "$config_file" | cut -d: -f1)
+            
+            if [ -n "$lyrics_line" ]; then
+                local temp_file="/tmp/config_genius_temp.yaml"
+                
+                # Get lines up to and including the lyrics: line
+                head -n "$lyrics_line" "$config_file" > "$temp_file"
+                
+                # Add our genius_api_key line
+                echo "  genius_api_key: \"$genius_token\"" >> "$temp_file"
+                
+                # Get the rest of the file
+                tail -n +$((lyrics_line + 1)) "$config_file" >> "$temp_file"
+                
+                mv "$temp_file" "$config_file"
+                print_success "Added Genius API key to existing lyrics section"
+                rm -f "$config_file.genius_backup"
+                print_success "Genius API configuration completed"
+                return 0
+            fi
+        else
+            # No lyrics section exists, create it
+            echo "" >> "$config_file"
+            echo "lyrics:" >> "$config_file"
+            echo "  enabled: true" >> "$config_file"
+            echo "  genius_api_key: \"$genius_token\"" >> "$config_file"
+            echo "  download_separate_files: true" >> "$config_file"
+            echo "  embed_in_audio: true" >> "$config_file"
+            print_success "Added lyrics section with Genius API key to config file"
+            rm -f "$config_file.genius_backup"
+            print_success "Genius API configuration completed"
+            return 0
+        fi
+    fi
+    
+    # If we get here, something went wrong
+    print_warning "Failed to update Genius API configuration"
+    mv "$config_file.genius_backup" "$config_file"
+    return 1
+}
+
 # Perform automatic Spotify login
 perform_spotify_login() {
     print_step "Performing Spotify authentication..."
@@ -708,6 +875,7 @@ perform_spotify_login() {
         return 1
     fi
 }
+
 update_config_file() {
     local callback_url="$1"
     local config_file="$INSTALL_DIR/config/config.yaml"
@@ -855,6 +1023,17 @@ main() {
     if ! update_spotify_credentials "$client_id" "$client_secret"; then
         print_error "Failed to update Spotify credentials in config file"
         exit 1
+    fi
+    
+    # Collect and configure Genius API token
+    echo ""
+    local genius_token=""
+    genius_token=$(collect_genius_token)
+    
+    if [ "$genius_token" != "SKIP_GENIUS" ] && [ -n "$genius_token" ]; then
+        if ! update_genius_credentials "$genius_token"; then
+            print_warning "Failed to update Genius API credentials, but continuing with installation"
+        fi
     fi
     
     # Perform automatic Spotify login
