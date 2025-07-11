@@ -48,20 +48,23 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
 - Spotify API keys
 - Genius API access token (recommended)
 
-### **MacOs Automatic installation:**
+### **MacOs automatic installation:**
   
 Open the terminal and paste the command below:
 ```bash
 cd ~/Desktop && curl -L -o install-macos.sh https://raw.githubusercontent.com/verryx-02/playlist-downloader/main/scripts/install-macos.sh && chmod +x install-macos.sh && ./install-macos.sh && cd ~/Desktop && rm install-macos.sh && cd playlist-downloader
 ```
 
-### **MacOs Manual installation:**
+### **MacOs manual installation:**
 For the manual installation see this guide 
  
-### **Windows Automatic installation:**
+### **Windows automatic installation:**
 ```bash
-
+cd $env:USERPROFILE\Desktop; Invoke-WebRequest -Uri "https://raw.githubusercontent.com/verryx-02/playlist-downloader/main/scripts/install-windows.ps1" -OutFile "install-windows.ps1"; Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process -Force; .\install-windows.ps1; Remove-Item "install-windows.ps1" -Force; cd playlist-downloader
 ```
+
+### **Windows manual installation:**
+For the manual installation see this guide 
 
 ---
 
