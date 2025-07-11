@@ -79,7 +79,7 @@ cd $env:USERPROFILE\Desktop; Invoke-WebRequest -Uri "https://raw.githubuserconte
 
 <div align="center">
 
-**Manual installation:**
+### **Manual installation:**
 
 </div>
 
