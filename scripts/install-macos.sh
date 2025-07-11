@@ -1016,7 +1016,7 @@ print_final_success() {
     echo -e "${GREEN}Everything is ready to use!${NC}"
     echo ""
     echo -e "${YELLOW}To use Playlist-Downloader:${NC}"
-    echo -e "${CYAN}  cd ~/Desktop/playlist-downloader && source .venv/bin/activate${NC}"
+    echo -e "${CYAN} source .venv/bin/activate${NC}"
     echo ""
     echo -e "${BLUE}Then try your first playlist download:${NC}"
     echo -e "${CYAN}  playlist-dl download \"https://open.spotify.com/playlist/YOUR_PLAYLIST_URL\"${NC}"
