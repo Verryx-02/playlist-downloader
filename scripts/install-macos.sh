@@ -12,6 +12,10 @@ YELLOW='\033[1;33m'
 BLUE='\033[1;34m'
 PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
+MAGENTA='\033[1;35m'
+BRIGHT_GREEN='\033[1;32m'
+BRIGHT_YELLOW='\033[1;33m'
+BRIGHT_CYAN='\033[1;36m'
 NC='\033[0m' # No Color
 
 # Configuration
@@ -19,15 +23,44 @@ REPO_URL="https://github.com/verryx-02/playlist-downloader"
 INSTALL_DIR="$HOME/Desktop/playlist-downloader"
 PYTHON_MIN_VERSION="3.8"
 
+# Helper function to center text
+center_text() {
+    local text="$1"
+    local width
+    width=$(tput cols 2>/dev/null || echo 80)
+    local padding=$(( (width - ${#text}) / 2 ))
+    printf "%*s%s\n" $padding "" "$text"
+}
+
+# Helper function to center and print colored box
+center_box() {
+    local line="$1"
+    local color="$2"
+    local width
+    width=$(tput cols 2>/dev/null || echo 80)
+    local text_width=63  # Width of the ASCII box
+    local padding=$(( (width - text_width) / 2 ))
+    printf "%*s%b%s%b\n" $padding "" "$color" "$line" "$NC"
+}
+
+# Helper function for centered interactive prompts
+center_prompt() {
+    local prompt="$1"
+    local width
+    width=$(tput cols 2>/dev/null || echo 80)
+    local padding=$(( (width - ${#prompt}) / 2 ))
+    printf "\n%*s%b🔸 %s%b" $padding "" "$BRIGHT_YELLOW" "$prompt" "$NC"
+}
+
 # Helper functions
 print_header() {
     echo ""
-    echo -e "${PURPLE}╔═══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${PURPLE}║                     Playlist-Downloader                       ║${NC}"
-    echo -e "${PURPLE}║                                                               ║${NC}"
-    echo -e "${PURPLE}║                 macOS Automatic Installer                     ║${NC}"
-    echo -e "${PURPLE}║                                                               ║${NC}"
-    echo -e "${PURPLE}╚═══════════════════════════════════════════════════════════════╝${NC}"
+    center_box "╔═══════════════════════════════════════════════════════════════╗" "${PURPLE}"
+    center_box "║                     Playlist-Downloader                       ║" "${PURPLE}"
+    center_box "║                                                               ║" "${PURPLE}"
+    center_box "║                 macOS Automatic Installer                     ║" "${PURPLE}"
+    center_box "║                                                               ║" "${PURPLE}"
+    center_box "╚═══════════════════════════════════════════════════════════════╝" "${PURPLE}"
     echo ""
 }
 
@@ -194,7 +227,8 @@ setup_project() {
         print_warning "Existing installation found at $INSTALL_DIR"
         
         while true; do
-            read -p "Do you want to remove it and reinstall? (y/N): " yn
+            center_prompt "Do you want to remove it and reinstall? (y/N): "
+            read yn
             case $yn in
                 [Yy]* ) 
                     print_info "Removing existing installation..."
@@ -269,7 +303,8 @@ setup_virtual_environment() {
         echo ""
         
         while true; do
-            read -p "Do you want to keep the existing virtual environment? (y/N): " yn
+            center_prompt "Do you want to keep the existing virtual environment? (y/N): "
+            read yn
             case $yn in
                 [Yy]* ) 
                     print_info "Keeping existing virtual environment"
@@ -524,6 +559,67 @@ setup_ssh_tunnel() {
     fi
 }
 
+update_config_file() {
+    local callback_url="$1"
+    local config_file="$INSTALL_DIR/config/config.yaml"
+    
+    print_step "Updating configuration file with callback URL..."
+    
+    if [ ! -f "$config_file" ]; then
+        # Check for config_example.yaml
+        local example_config="$INSTALL_DIR/config/config_example.yaml"
+        if [ -f "$example_config" ]; then
+            print_info "Copying config_example.yaml to config.yaml..."
+            cp "$example_config" "$config_file"
+        else
+            print_error "No config file found at $config_file"
+            return 1
+        fi
+    fi
+    
+    # Update the redirect_url field using a more robust approach
+    if command_exists sed; then
+        # Create backup
+        cp "$config_file" "$config_file.backup"
+        
+        # Use a temporary file to avoid sed issues with special characters
+        local temp_file="/tmp/config_temp.yaml"
+        
+        # Check if redirect_url field exists
+        if grep -q "redirect_url:" "$config_file"; then
+            # Field exists, replace it using awk (more robust than sed for this)
+            awk -v url="$callback_url" '
+                /^[[:space:]]*redirect_url:/ { 
+                    sub(/redirect_url:.*/, "redirect_url: \"" url "\"")
+                }
+                { print }
+            ' "$config_file" > "$temp_file"
+            
+            if [ -f "$temp_file" ] && [ -s "$temp_file" ]; then
+                mv "$temp_file" "$config_file"
+                print_success "Config file updated with callback URL"
+            else
+                print_warning "Failed to update config file automatically"
+                mv "$config_file.backup" "$config_file"
+                rm -f "$temp_file"
+                return 1
+            fi
+        else
+            # Field doesn't exist, add it
+            echo "redirect_url: \"$callback_url\"" >> "$config_file"
+            print_success "Added callback URL to config file"
+        fi
+        
+        # Clean up backup if successful
+        rm -f "$config_file.backup"
+    else
+        print_warning "sed and awk not available, cannot update config file automatically"
+        print_info "Please manually update $config_file with:"
+        print_info "redirect_url: \"$callback_url\""
+        return 1
+    fi
+}
+
 # Update config file with output directory
 update_output_directory() {
     local config_file="$INSTALL_DIR/config/config.yaml"
@@ -567,6 +663,13 @@ update_output_directory() {
     fi
 }
 
+# Activate environment and show ready message
+activate_environment() {
+    cd "$INSTALL_DIR"
+    source .venv/bin/activate
+    print_success "Virtual environment activated"
+}
+
 # Close SSH tunnel after authentication
 close_ssh_tunnel() {
     local ssh_pid="$1"
@@ -593,7 +696,7 @@ collect_spotify_credentials() {
     
     # Get Client ID
     while true; do
-        echo -n "Enter your Spotify Client ID: " >&2
+        echo -e -n "${BRIGHT_CYAN}Enter your Spotify Client ID: ${NC}" >&2
         read client_id
         if [ -n "$client_id" ] && [ ${#client_id} -ge 10 ]; then
             break
@@ -604,7 +707,7 @@ collect_spotify_credentials() {
     
     # Get Client Secret
     while true; do
-        echo -n "Enter your Spotify Client Secret: " >&2
+        echo -e -n "${BRIGHT_CYAN}Enter your Spotify Client Secret: ${NC}" >&2
         read client_secret
         if [ -n "$client_secret" ] && [ ${#client_secret} -ge 10 ]; then
             break
@@ -682,12 +785,12 @@ update_spotify_credentials() {
 collect_genius_token() {
     # All output goes to stderr except the final return value
     echo "" >&2
-    echo -e "${PURPLE}╔═══════════════════════════════════════════════════════════════╗${NC}" >&2
-    echo -e "${PURPLE}║                    Genius API Setup                           ║${NC}" >&2
-    echo -e "${PURPLE}║                                                               ║${NC}" >&2
-    echo -e "${PURPLE}║  This enables high-quality lyrics download for your music     ║${NC}" >&2
-    echo -e "${PURPLE}║                                                               ║${NC}" >&2
-    echo -e "${PURPLE}╚═══════════════════════════════════════════════════════════════╝${NC}" >&2
+    center_box "╔═══════════════════════════════════════════════════════════════╗" "${PURPLE}" >&2
+    center_box "║                    Genius API Setup                           ║" "${PURPLE}" >&2
+    center_box "║                                                               ║" "${PURPLE}" >&2
+    center_box "║  This enables high-quality lyrics download for your music     ║" "${PURPLE}" >&2
+    center_box "║                                                               ║" "${PURPLE}" >&2
+    center_box "╚═══════════════════════════════════════════════════════════════╝" "${PURPLE}" >&2
     echo "" >&2
     echo -e "${YELLOW}Genius API Token Setup (Optional but Recommended)${NC}" >&2
     echo "" >&2
@@ -699,7 +802,7 @@ collect_genius_token() {
     echo "" >&2
     
     while true; do
-        echo -n "Do you want to set up Genius API for lyrics? (y/n): " >&2
+        center_prompt "Do you want to set up Genius API for lyrics? (y/n): " >&2
         read setup_genius
         case $setup_genius in
             [Yy]* ) 
@@ -724,7 +827,7 @@ collect_genius_token() {
     echo "" >&2
     
     while true; do
-        echo -n "Genius API Token: " >&2
+        echo -e -n "${BRIGHT_CYAN}Genius API Token: ${NC}" >&2
         read genius_token
         
         # Basic validation
@@ -769,71 +872,43 @@ update_genius_credentials() {
     # Create backup
     cp "$config_file" "$config_file.genius_backup"
     
-    # Find the line number of genius_api_key
-    local line_number=""
-    line_number=$(grep -n "genius_api_key:" "$config_file" | cut -d: -f1)
+    # Create a temporary file to make the update
+    local temp_file="/tmp/config_genius.yaml"
+    cp "$config_file" "$temp_file"
     
-    if [ -n "$line_number" ]; then
-        # genius_api_key field exists, replace it using head/tail approach
-        local temp_file="/tmp/config_genius_temp.yaml"
-        
-        # Get lines before the target line
-        head -n $((line_number - 1)) "$config_file" > "$temp_file"
-        
-        # Add our new line (create it safely without sed)
-        echo "  genius_api_key: \"$genius_token\"" >> "$temp_file"
-        
-        # Get lines after the target line
-        tail -n +$((line_number + 1)) "$config_file" >> "$temp_file"
-        
-        # Verify the update worked by checking if our line is there
-        if grep -q "genius_api_key:" "$temp_file"; then
-            mv "$temp_file" "$config_file"
-            print_success "Updated Genius API key in config file"
-            rm -f "$config_file.genius_backup"
-            print_success "Genius API configuration completed"
-            return 0
-        else
-            print_warning "Failed to update Genius API key"
-            mv "$config_file.genius_backup" "$config_file"
-            rm -f "$temp_file"
-            return 1
-        fi
+    # Check if lyrics section and genius_api_key already exist
+    if grep -q "^lyrics:" "$temp_file" && grep -q "genius_api_key:" "$temp_file"; then
+        # Both exist, just update the key
+        sed -i.bak "s/genius_api_key:.*/genius_api_key: \"$genius_token\"/" "$temp_file"
+    elif grep -q "^lyrics:" "$temp_file"; then
+        # Lyrics section exists but no genius key, add it
+        sed -i.bak "/^lyrics:/a\\
+  genius_api_key: \"$genius_token\"" "$temp_file"
     else
-        # genius_api_key field doesn't exist
-        if grep -q "^lyrics:" "$config_file"; then
-            # Add genius_api_key to existing lyrics section
-            local lyrics_line=""
-            lyrics_line=$(grep -n "^lyrics:" "$config_file" | cut -d: -f1)
-            
-            if [ -n "$lyrics_line" ]; then
-                local temp_file="/tmp/config_genius_temp.yaml"
-                
-                # Get lines up to and including the lyrics: line
-                head -n "$lyrics_line" "$config_file" > "$temp_file"
-                
-                # Add our genius_api_key line
-                echo "  genius_api_key: \"$genius_token\"" >> "$temp_file"
-                
-                # Get the rest of the file
-                tail -n +$((lyrics_line + 1)) "$config_file" >> "$temp_file"
-                
-                mv "$temp_file" "$config_file"
-                print_success "Added Genius API key to existing lyrics section"
-                rm -f "$config_file.genius_backup"
-                print_success "Genius API configuration completed"
-                return 0
-            fi
-        else
-            # No lyrics section exists, create it
-            echo "" >> "$config_file"
-            echo "lyrics:" >> "$config_file"
-            echo "  enabled: true" >> "$config_file"
-            echo "  genius_api_key: \"$genius_token\"" >> "$config_file"
-            echo "  download_separate_files: true" >> "$config_file"
-            echo "  embed_in_audio: true" >> "$config_file"
-            print_success "Added lyrics section with Genius API key to config file"
-            rm -f "$config_file.genius_backup"
+        # No lyrics section, add everything
+        cat >> "$temp_file" << EOF
+
+lyrics:
+  enabled: true
+  genius_api_key: "$genius_token"
+  download_separate_files: true
+  embed_in_audio: true
+EOF
+    fi
+    
+    # Clean up sed backup file
+    rm -f "$temp_file.bak"
+    
+    # Verify the update
+    if grep -q "genius_api_key:" "$temp_file"; then
+        mv "$temp_file" "$config_file"
+        rm -f "$config_file.genius_backup"
+        print_success "Genius API configuration completed"
+        return 0
+    else
+        # Restore backup if something went wrong
+        if [ -f "$config_file.genius_backup" ]; then
+            mv "$config_file.genius_backup" "$config_file"
             print_success "Genius API configuration completed"
             return 0
         fi
@@ -854,15 +929,72 @@ perform_spotify_login() {
     
     echo ""
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${YELLOW}Starting Spotify Authentication${NC}"
+    echo -e "${BRIGHT_GREEN}🔐 Starting Spotify authentication...${NC}"
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
     echo -e "${BLUE}The browser will open automatically for Spotify login...${NC}"
     echo -e "${PURPLE}Follow the instructions in your browser to complete authentication.${NC}"
     echo ""
     
-    # Run the login command
-    if playlist-dl auth login; then
+    # Run the login command and capture/colorize output
+    if playlist-dl auth login 2>&1 | while IFS= read -r line; do
+        case "$line" in
+            *"Access token expired"*)
+                echo -e "${YELLOW}Access token expired, refreshing...${NC}"
+                ;;
+            *"Warning: Failed to refresh token"*)
+                echo -e "${YELLOW}Warning: Failed to refresh token: ${line#*: }${NC}"
+                ;;
+            *"Token refresh failed"*)
+                echo -e "${YELLOW}Token refresh failed, re-authorization required${NC}"
+                ;;
+            *"No valid token found"*)
+                echo -e "${BLUE}No valid token found, starting authorization...${NC}"
+                ;;
+            *"Starting authorization flow"*)
+                echo -e "${CYAN}Starting authorization flow...${NC}"
+                ;;
+            *"Using external tunnel"*)
+                echo -e "${BRIGHT_GREEN}Using external tunnel: ${line#*: }${NC}"
+                ;;
+            *"Opening browser"*)
+                echo -e "${GREEN}Opening browser for Spotify authorization...${NC}"
+                ;;
+            *"If browser doesn't open"*)
+                echo -e "${BLUE}If browser doesn't open, visit: ${line#*: }${NC}"
+                ;;
+            *"================================================================================")
+                echo -e "${CYAN}================================================================================${NC}"
+                ;;
+            *"USING EXTERNAL TUNNEL:"*)
+                echo -e "${BRIGHT_YELLOW}USING EXTERNAL TUNNEL:${NC}"
+                ;;
+            *"1. Complete authorization"*)
+                echo -e "${CYAN}1. Complete authorization in the browser${NC}"
+                ;;
+            *"2. After authorization"*)
+                echo -e "${CYAN}2. After authorization, you'll be redirected to your tunnel URL${NC}"
+                ;;
+            *"3. Copy the 'code' parameter"*)
+                echo -e "${CYAN}3. Copy the 'code' parameter from the URL${NC}"
+                ;;
+            *"4. Paste it below"*)
+                echo -e "${CYAN}4. Paste it below when prompted${NC}"
+                ;;
+            *"Enter the authorization code"*)
+                echo -e "${BRIGHT_CYAN}Enter the authorization code from the redirect URL: ${NC}"
+                ;;
+            *"Error exchanging code"*)
+                echo -e "${RED}Error exchanging code for token: ${line#*: }${NC}"
+                ;;
+            *"Authentication error"*)
+                echo -e "${RED}❌ Authentication error: ${line#*: }${NC}"
+                ;;
+            *)
+                echo -e "${line}"
+                ;;
+        esac
+    done; then
         echo ""
         echo -e "${GREEN}Spotify authentication completed successfully!${NC}"
         echo ""
@@ -874,74 +1006,6 @@ perform_spotify_login() {
         echo ""
         return 1
     fi
-}
-
-update_config_file() {
-    local callback_url="$1"
-    local config_file="$INSTALL_DIR/config/config.yaml"
-    
-    print_step "Updating configuration file with callback URL..."
-    
-    if [ ! -f "$config_file" ]; then
-        # Check for config_example.yaml
-        local example_config="$INSTALL_DIR/config/config_example.yaml"
-        if [ -f "$example_config" ]; then
-            print_info "Copying config_example.yaml to config.yaml..."
-            cp "$example_config" "$config_file"
-        else
-            print_error "No config file found at $config_file"
-            return 1
-        fi
-    fi
-    
-    # Update the redirect_url field using a more robust approach
-    if command_exists sed; then
-        # Create backup
-        cp "$config_file" "$config_file.backup"
-        
-        # Use a temporary file to avoid sed issues with special characters
-        local temp_file="/tmp/config_temp.yaml"
-        
-        # Check if redirect_url field exists
-        if grep -q "redirect_url:" "$config_file"; then
-            # Field exists, replace it using awk (more robust than sed for this)
-            awk -v url="$callback_url" '
-                /^[[:space:]]*redirect_url:/ { 
-                    sub(/redirect_url:.*/, "redirect_url: \"" url "\"")
-                }
-                { print }
-            ' "$config_file" > "$temp_file"
-            
-            if [ -f "$temp_file" ] && [ -s "$temp_file" ]; then
-                mv "$temp_file" "$config_file"
-                print_success "Config file updated with callback URL"
-            else
-                print_warning "Failed to update config file automatically"
-                mv "$config_file.backup" "$config_file"
-                rm -f "$temp_file"
-                return 1
-            fi
-        else
-            # Field doesn't exist, add it
-            echo "redirect_url: \"$callback_url\"" >> "$config_file"
-            print_success "Added callback URL to config file"
-        fi
-        
-        # Clean up backup if successful
-        rm -f "$config_file.backup"
-    else
-        print_warning "sed and awk not available, cannot update config file automatically"
-        print_info "Please manually update $config_file with:"
-        print_info "redirect_url: \"$callback_url\""
-        return 1
-    fi
-}
-
-# Activate environment and show ready message
-activate_environment() {
-    cd "$INSTALL_DIR"
-    source .venv/bin/activate
-    print_success "Virtual environment activated"
 }
 
 # Show final success message with activation instructions
@@ -959,8 +1023,6 @@ print_final_success() {
     echo ""
     echo -e "${PURPLE}For more commands and options:${NC}"
     echo -e "${CYAN}  playlist-dl --help${NC}"
-    echo ""
-    echo -e "${GREEN}Happy downloading!${NC}"
     echo ""
 }
 
