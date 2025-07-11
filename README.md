@@ -10,7 +10,7 @@
 
 </div>
 
-  
+
 A comprehensive tool for downloading Spotify playlists locally with YouTube Music integration and automatic lyrics support.
 
 ---
@@ -61,7 +61,7 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
 </div>
 
 
-### Prerequisites
+### Prerequisites (Will be installed automatically in a virtual environment if they are not
 
 - Python 3.8+
 - FFmpeg (for audio processing)
@@ -73,7 +73,6 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
 <div align="center">
 
 ### **MacOs automatic installation:**
-
 </div>
 
 Open the terminal and paste the command below:
@@ -81,6 +80,19 @@ Open the terminal and paste the command below:
 cd ~/Desktop && curl -L -o install-macos.sh https://raw.githubusercontent.com/verryx-02/playlist-downloader/main/scripts/install-macos.sh && chmod +x install-macos.sh && ./install-macos.sh && cd ~/Desktop && rm install-macos.sh && cd playlist-downloader
 ```
 
+<details>
+<summary><strong>What does this frightening command do?</strong></summary>
+This single command will:
+
+- Navigate to your Desktop
+- Download the installation script from GitHub
+- Make the script executable
+- Run the automatic installer (installs Python, FFmpeg, sets up project)
+- Clean up by removing the installer file
+- Enter the project directory
+
+You can reed the script [here](https://github.com/Verryx-02/playlist-downloader/blob/main/scripts/install-macos.sh). 
+</details>
 ---
 
 <div align="center">
@@ -94,7 +106,18 @@ Open the Powershell and paste the command below:
 ```bash
 cd $env:USERPROFILE\Desktop; Invoke-WebRequest -Uri "https://raw.githubusercontent.com/verryx-02/playlist-downloader/main/scripts/install-windows.ps1" -OutFile "install-windows.ps1"; Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process -Force; .\install-windows.ps1; Remove-Item "install-windows.ps1" -Force; cd playlist-downloader
 ```
+<details>
+<summary><strong>What does this frightening command do?</strong></summary>
+This single command will:
 
+- Navigate to your Desktop
+- Download the installation script from GitHub
+- Allow script execution (temporarily, for security)
+- Run the automatic installer (installs Chocolatey, Python, FFmpeg, sets up project)
+- Clean up by removing the installer file
+- Enter the project directory
+You can reed the script [here](https://github.com/Verryx-02/playlist-downloader/blob/main/scripts/install-windows.ps1). 
+</details>
 ---
 
 <div align="center">
@@ -146,8 +169,8 @@ playlist-dl list --show-lyrics
 
 ### Liked Songs Management
 
-#### Download Your Liked Songs
-**Downloads all your Spotify liked songs to a "My Liked Songs" folder.**
+#### **Downloads all your Spotify liked songs to a "My Liked Songs" folder.**
+Command:
 ```bash
 playlist-dl download-liked
 ```
@@ -160,25 +183,24 @@ Options:
 - `--concurrent 5`: Number of parallel downloads
 - `--dry-run`: Preview what would be downloaded
 
-#### Sync Liked Songs
-**Synchronizes your liked songs collection, downloading only newly liked tracks since the last sync.**
+#### **Synchronizes your liked songs collection, downloading only newly liked tracks since the last sync.**  
+Command:
 ```bash
 playlist-dl sync-liked
-```
-
-Synchronizes your liked songs collection, downloading only newly liked tracks since the last sync.
+```  
 
 Options:
 - `--output /path/to/output`: Custom output directory
 
-#### Check Liked Songs Status
+#### Shows the current status of your liked songs collection without downloading anything.
+ 
+**Note**: Your liked songs are automatically organized in a dedicated "My Liked Songs" folder and managed with the same sync tracking system as regular playlists.  
+Command:
 ```bash
 playlist-dl check-liked
 ```
 
-Shows the current status of your liked songs collection without downloading anything.
 
-**Note**: Your liked songs are automatically organized in a dedicated "My Liked Songs" folder and managed with the same sync tracking system as regular playlists.
 
 ### Lyrics Management
 
