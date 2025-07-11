@@ -226,6 +226,7 @@ setup_project() {
     if [ -d "$INSTALL_DIR" ]; then
         print_warning "Existing installation found at $INSTALL_DIR"
         
+        sleep 2
         while true; do
             center_prompt "Do you want to remove it and reinstall? (y/N): "
             read yn
@@ -302,6 +303,7 @@ setup_virtual_environment() {
         echo -e "${BLUE}2. Remove and recreate environment${NC}"
         echo ""
         
+        sleep 2
         while true; do
             center_prompt "Do you want to keep the existing virtual environment? (y/N): "
             read yn
@@ -448,7 +450,7 @@ attempt_ssh_tunnel() {
     
     # Clean up any existing SSH processes
     pkill -f "ssh -R 80:localhost:8080 nokey@localhost.run" 2>/dev/null || true
-    sleep 1
+    sleep 2
     
     # Remove old output file
     rm -f "$output_file"
@@ -694,6 +696,7 @@ collect_spotify_credentials() {
     echo -e "${PURPLE}(You can get these from: https://developer.spotify.com/dashboard)${NC}" >&2
     echo "" >&2
     
+    sleep 2
     # Get Client ID
     while true; do
         echo -e -n "${BRIGHT_CYAN}Enter your Spotify Client ID: ${NC}" >&2
@@ -801,6 +804,7 @@ collect_genius_token() {
     echo -e "${CYAN}4. Copy the 'Client Access Token' (not Client ID/Secret)${NC}" >&2
     echo "" >&2
     
+    sleep 2
     while true; do
         center_prompt "Do you want to set up Genius API for lyrics? (y/n): " >&2
         read setup_genius
@@ -1015,12 +1019,15 @@ print_final_success() {
     echo ""
     echo -e "${GREEN}Everything is ready to use!${NC}"
     echo ""
+    sleep 2
     echo -e "${YELLOW}To use Playlist-Downloader:${NC}"
-    echo -e "${CYAN} source .venv/bin/activate${NC}"
+    echo -e "${CYAN}  source .venv/bin/activate${NC}"
     echo ""
+    sleep 2
     echo -e "${BLUE}Then try your first playlist download:${NC}"
     echo -e "${CYAN}  playlist-dl download \"https://open.spotify.com/playlist/YOUR_PLAYLIST_URL\"${NC}"
     echo ""
+    sleep 2
     echo -e "${PURPLE}For more commands and options:${NC}"
     echo -e "${CYAN}  playlist-dl --help${NC}"
     echo ""
