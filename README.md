@@ -1,11 +1,21 @@
+<div align="center">
+
 # Playlist-Downloader
+
+</div>
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
   
 A comprehensive tool for downloading Spotify playlists locally with YouTube Music integration and automatic lyrics support.
 
 ---
 
+<div align="center">
+
 ## Features
+
+</div>
+
 
 ### **Core Functionality**
 - **Complete Playlist Downloads**: Download entire Spotify playlists with metadata
@@ -39,7 +49,12 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
 
 ---
 
+<div align="center">
+
 ## Quick Start
+
+</div>
+
 
 ### Prerequisites
 
@@ -87,7 +102,12 @@ For the manual installation see this guide
 
 ---
 
+<div align="center">
+
 ## Usage Guide
+
+</div>
+
 
 ### Basic Commands
 
