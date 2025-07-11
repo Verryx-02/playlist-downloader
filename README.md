@@ -4,7 +4,12 @@
 
 </div>
 
+<div align="center">
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+</div>
+
   
 A comprehensive tool for downloading Spotify playlists locally with YouTube Music integration and automatic lyrics support.
 
@@ -315,10 +320,3 @@ The developers are not responsible for any misuse of this software.
 
 - **v0.9.0-beta** (Current): Initial release with core functionality
 
----
-
-<div align="center">
-
-**🎵 Happy Downloading! 🎵**
-
-</div>
