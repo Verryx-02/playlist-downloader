@@ -50,8 +50,12 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
 
 ---
 
+<div align="center">
+
 ### **MacOs automatic installation:**
-  
+
+</div>
+
 Open the terminal and paste the command below:
 ```bash
 cd ~/Desktop && curl -L -o install-macos.sh https://raw.githubusercontent.com/verryx-02/playlist-downloader/main/scripts/install-macos.sh && chmod +x install-macos.sh && ./install-macos.sh && cd ~/Desktop && rm install-macos.sh && cd playlist-downloader
@@ -59,7 +63,12 @@ cd ~/Desktop && curl -L -o install-macos.sh https://raw.githubusercontent.com/ve
 
 ---
 
+<div align="center">
+
 ### **Windows automatic installation:**
+
+</div>
+
 
 Open the Powershell and paste the command below:
 ```bash
@@ -68,11 +77,12 @@ cd $env:USERPROFILE\Desktop; Invoke-WebRequest -Uri "https://raw.githubuserconte
 
 ---
 
-### **MacOs manual installation:**
-For the manual installation see this guide 
+<div align="center">
 
+**Manual installation:**
 
-### **Windows manual installation:**
+</div>
+
 For the manual installation see this guide 
 
 ---
