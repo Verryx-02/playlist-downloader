@@ -296,16 +296,16 @@ chmod +x download_playlists.sh
 ./download_playlists.sh
 ```
 
-### Sync Scheduling
+### update Scheduling
 
-Set up automatic sync with cron:
+Set up automatic update with cron:
 
 ```bash
 # Edit crontab
 crontab -e
 
-# Add line for daily sync at 3 AM
-0 3 * * * /usr/local/bin/playlist-dl sync "PLAYLIST_URL" >> /var/log/playlist-sync.log 2>&1
+# Add line for daily update at 3 AM
+0 3 * * * /usr/local/bin/playlist-dl update "PLAYLIST_URL" >> /var/log/playlist-update.log 2>&1
 ```
 
 ## Troubleshooting

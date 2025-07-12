@@ -165,7 +165,7 @@ class Settings:
         self.audio = AudioConfig()
         self.ytmusic = YTMusicConfig()
         self.lyrics = LyricsConfig()
-        self.sync = SyncConfig()
+        self.update = SyncConfig()
         self.metadata = MetadataConfig()
         self.logging = LoggingConfig()
         self.network = NetworkConfig()
@@ -208,7 +208,7 @@ class Settings:
             'audio': self.audio,
             'ytmusic': self.ytmusic,
             'lyrics': self.lyrics,
-            'sync': self.sync,
+            'update': self.update,
             'metadata': self.metadata,
             'logging': self.logging,
             'network': self.network,
@@ -282,7 +282,7 @@ class Settings:
             'audio': self._dataclass_to_dict(self.audio),
             'ytmusic': self._dataclass_to_dict(self.ytmusic),
             'lyrics': self._dataclass_to_dict(self.lyrics),
-            'sync': self._dataclass_to_dict(self.sync),
+            'update': self._dataclass_to_dict(self.update),
             'metadata': self._dataclass_to_dict(self.metadata),
             'logging': self._dataclass_to_dict(self.logging),
             'network': self._dataclass_to_dict(self.network),

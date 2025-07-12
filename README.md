@@ -37,7 +37,7 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
 ### **Synchronization**
 - **Incremental Updates**: Only download new/changed tracks
 - **Smart Reordering**: Detect and handle moved tracks
-- **Status Tracking**: Detailed tracklist.txt files for sync state
+- **Status Tracking**: Detailed tracklist.txt files for update state
 - **Resume Capability**: Resume interrupted downloads
 
 ### **Audio Processing**
@@ -165,16 +165,12 @@ Options:
 - `--output /path/to/output`: Custom output directory
 - `--concurrent 5`: Number of parallel downloads
 
-#### Sync an Existing Playlist 
-If a certain Playlyst has been modified after you downloaded it, you can only download the changes with the sync command here:
+#### Update an Existing Playlist 
+If a certain Playlyst has been modified after you downloaded it, you can only download the changes with the update command here:
 ```bash
-playlist-dl sync "https://open.spotify.com/playlist/YOUR_PLAYLIST_ID"
+playlist-dl update "https://open.spotify.com/playlist/YOUR_PLAYLIST_ID"
 ```
 
-#### Check Playlist Status
-```bash
-playlist-dl check "https://open.spotify.com/playlist/YOUR_PLAYLIST_ID"
-```
 
 #### List Local Playlists
 ```bash
@@ -197,23 +193,14 @@ Options:
 - `--concurrent 5`: Number of parallel downloads
 - `--dry-run`: Preview what would be downloaded
 
-#### **Synchronizes your liked songs collection, downloading only newly liked tracks since the last sync.**  
+#### **Update your liked songs collection, downloading only newly liked tracks since the last update.**  
 Command:
 ```bash
-playlist-dl sync-liked
+playlist-dl update-liked
 ```  
 
 Options:
 - `--output /path/to/output`: Custom output directory
-
-#### Shows the current status of your liked songs collection without downloading anything.
- 
-**Note**: Your liked songs are automatically organized in a dedicated "My Liked Songs" folder and managed with the same sync tracking system as regular playlists.  
-Command:
-```bash
-playlist-dl check-liked
-```
-
 
 
 ### Lyrics Management
@@ -261,7 +248,7 @@ playlist-dl auth logout
 
 ## Tracklist Format
 
-The `tracklist.txt` file tracks sync status:
+The `tracklist.txt` file tracks update status:
 
 ```
 # Playlist-Downloader Tracklist

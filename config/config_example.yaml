@@ -54,10 +54,10 @@ lyrics:
   exclude_instrumental: true          # Skip instrumental tracks
   include_translations: false         # Include translated lyrics if available
 
-sync:
+update:
   auto_sync: false       # Automatic synchronization
   check_interval: 3600   # 1 hour in seconds
-  sync_lyrics: true      # Include lyrics in sync operations
+  sync_lyrics: true      # Include lyrics in update operations
   backup_tracklist: true # Backup tracklist.txt before modifications
   detect_moved_tracks: true  # Detect and handle moved tracks
 

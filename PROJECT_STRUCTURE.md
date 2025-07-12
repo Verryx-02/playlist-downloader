@@ -8,7 +8,7 @@ playlist-downloader/
 │   ├── ytmusic/            # YouTube Music integration
 │   ├── audio/              # Audio processing
 │   ├── lyrics/             # Lyrics retrieval
-│   ├── sync/               # Synchronization logic
+│   ├── update/               # Synchronization logic
 │   ├── utils/              # Utilities and helpers
 │   └── main.py             # CLI entry point
 ├── config/                 # Configuration files

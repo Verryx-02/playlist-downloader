@@ -1,6 +1,6 @@
 """
 Playlist synchronization logic for incremental updates and change detection
-Handles sync operations between Spotify playlists and local downloads
+Handles update operations between Spotify playlists and local downloads
 """
 
 from pathlib import Path
@@ -71,7 +71,7 @@ class SyncResult:
     def summary(self) -> str:
         """Get summary string"""
         if not self.success:
-            return f"Sync failed: {self.error_message}"
+            return f"update failed: {self.error_message}"
         
         parts = []
         if self.downloads_completed > 0:
@@ -109,10 +109,10 @@ class PlaylistSynchronizer:
         self.lyrics_processor = get_lyrics_processor()
         self.tracklist_manager = get_tracklist_manager()
         
-        # Sync configuration
-        self.auto_sync = self.settings.sync.auto_sync
-        self.sync_lyrics = self.settings.sync.sync_lyrics
-        self.detect_moved_tracks = self.settings.sync.detect_moved_tracks
+        # update configuration
+        self.auto_sync = self.settings.update.auto_sync
+        self.sync_lyrics = self.settings.update.sync_lyrics
+        self.detect_moved_tracks = self.settings.update.detect_moved_tracks
         self.max_concurrent = self.settings.download.concurrency
         
         # File organization
@@ -433,11 +433,11 @@ class PlaylistSynchronizer:
                 # New playlist - create full download plan
                 return self._create_initial_sync_plan(current_playlist, local_directory)
             else:
-                # Existing playlist - create incremental sync plan
+                # Existing playlist - create incremental update plan
                 return self._create_incremental_sync_plan(current_playlist, local_directory)
                 
         except Exception as e:
-            self.logger.error(f"Failed to create sync plan: {e}")
+            self.logger.error(f"Failed to create update plan: {e}")
             return SyncPlan(
                 playlist_id=playlist_id if 'playlist_id' in locals() else "",
                 playlist_name="Unknown",
@@ -592,14 +592,14 @@ class PlaylistSynchronizer:
         local_directory: Path
     ) -> SyncPlan:
         """
-        Create sync plan for liked songs (virtual playlist)
+        Create update plan for liked songs (virtual playlist)
         
         Args:
             virtual_playlist: Virtual playlist with liked songs
             local_directory: Local directory for liked songs
             
         Returns:
-            SyncPlan for liked songs sync
+            SyncPlan for liked songs update
         """
         # Check if local version exists
         tracklist_path = local_directory / "tracklist.txt"
@@ -608,12 +608,12 @@ class PlaylistSynchronizer:
             # New liked songs collection - create full download plan
             return self._create_initial_sync_plan(virtual_playlist, local_directory)
         else:
-            # Existing collection - create incremental sync plan
+            # Existing collection - create incremental update plan
             return self._create_incremental_sync_plan(virtual_playlist, local_directory)
 
     def execute_liked_songs_sync(self, virtual_playlist: SpotifyPlaylist, local_directory: Path) -> SyncResult:
         """
-        Execute sync for liked songs without refetching from Spotify
+        Execute update for liked songs without refetching from Spotify
         
         Args:
             virtual_playlist: Already loaded virtual playlist
@@ -625,7 +625,7 @@ class PlaylistSynchronizer:
         # Setup playlist logging
         self._setup_playlist_logging(virtual_playlist, local_directory)
         
-        # Create sync plan
+        # Create update plan
         sync_plan = self._create_liked_songs_sync_plan(virtual_playlist, local_directory)
         
         if not sync_plan.has_changes:
@@ -640,15 +640,15 @@ class PlaylistSynchronizer:
                 reordering_performed=False
             )
         
-        # Execute sync using virtual playlist directly (no Spotify refetch)
+        # Execute update using virtual playlist directly (no Spotify refetch)
         return self._execute_sync_with_virtual_playlist(sync_plan, virtual_playlist, local_directory)
 
     def _execute_sync_with_virtual_playlist(self, sync_plan: SyncPlan, virtual_playlist: SpotifyPlaylist, local_directory: Path) -> SyncResult:
         """
-        Execute sync plan using provided virtual playlist (no Spotify API refetch)
+        Execute update plan using provided virtual playlist (no Spotify API refetch)
         
         Args:
-            sync_plan: Sync plan to execute
+            sync_plan: update plan to execute
             virtual_playlist: Virtual playlist with current state
             local_directory: Local playlist directory
             
@@ -656,7 +656,7 @@ class PlaylistSynchronizer:
             SyncResult with operation results
         """
         # Get new logger instance after reconfiguration
-        operation_logger = OperationLogger(get_logger(__name__), f"Sync: {sync_plan.playlist_name}")
+        operation_logger = OperationLogger(get_logger(__name__), f"update: {sync_plan.playlist_name}")
         operation_logger.start()
         
         start_time = datetime.now()
@@ -708,7 +708,7 @@ class PlaylistSynchronizer:
             result.operations_performed = len(sync_plan.operations)
             result.total_time = (datetime.now() - start_time).total_seconds()
             
-            # Update the virtual playlist tracks with the states from sync operations
+            # Update the virtual playlist tracks with the states from update operations
             self._update_playlist_track_states(virtual_playlist, sync_plan.operations)
             
             # Create or update tracklist file with updated states
@@ -725,7 +725,7 @@ class PlaylistSynchronizer:
             return result
             
         except Exception as e:
-            operation_logger.error(f"Liked songs sync execution failed: {e}")
+            operation_logger.error(f"Liked songs update execution failed: {e}")
             return SyncResult(
                 success=False,
                 playlist_id=sync_plan.playlist_id,
@@ -824,7 +824,7 @@ class PlaylistSynchronizer:
                 
         except Exception as e:
             self.logger.error(f"Tracklist validation failed: {e}")
-            # Continue without validation - sync will handle inconsistencies
+            # Continue without validation - update will handle inconsistencies
 
     def _search_existing_playlist(self, playlist: SpotifyPlaylist) -> List[Path]:
         """
@@ -890,14 +890,14 @@ class PlaylistSynchronizer:
         local_directory: Path
     ) -> SyncPlan:
         """
-        Create sync plan for existing playlist (incremental update)
+        Create update plan for existing playlist (incremental update)
         
         Args:
             playlist: Current Spotify playlist
             local_directory: Local directory
             
         Returns:
-            SyncPlan for incremental sync
+            SyncPlan for incremental update
         """
         operations = []
         
@@ -990,7 +990,7 @@ class PlaylistSynchronizer:
         local_directory: Path
     ) -> SyncPlan:
         """
-        Create sync plan for new playlist (full download)
+        Create update plan for new playlist (full download)
         
         Args:
             playlist: Spotify playlist
@@ -1014,7 +1014,7 @@ class PlaylistSynchronizer:
                 # Create tracklist.txt with current states
                 self._create_or_update_tracklist(playlist, local_directory)
                 
-                # Now create sync plan only for pending tracks
+                # Now create update plan only for pending tracks
                 pending_tracks = [track for track in playlist.tracks if track.audio_status == TrackStatus.PENDING]
                 
                 if not pending_tracks:
@@ -1076,7 +1076,7 @@ class PlaylistSynchronizer:
             estimated_time += len(playlist.tracks) * 5.0  # ~5 seconds per lyrics search
         
         self.logger.info(
-            f"Created initial sync plan for '{playlist.name}': "
+            f"Created initial update plan for '{playlist.name}': "
             f"{len(operations)} tracks to download"
         )
         
@@ -1094,7 +1094,7 @@ class PlaylistSynchronizer:
         Execute synchronization plan
         
         Args:
-            sync_plan: Sync plan to execute
+            sync_plan: update plan to execute
             local_directory: Local playlist directory
             
         Returns:
@@ -1117,7 +1117,7 @@ class PlaylistSynchronizer:
             )
         
         # Get new logger instance after reconfiguration
-        operation_logger = OperationLogger(get_logger(__name__), f"Sync: {sync_plan.playlist_name}")
+        operation_logger = OperationLogger(get_logger(__name__), f"update: {sync_plan.playlist_name}")
         operation_logger.start()
         
         start_time = datetime.now()
@@ -1169,7 +1169,7 @@ class PlaylistSynchronizer:
             result.operations_performed = len(sync_plan.operations)
             result.total_time = (datetime.now() - start_time).total_seconds()
             
-            # Update the playlist tracks with the states from sync operations
+            # Update the playlist tracks with the states from update operations
             # DON'T reload from Spotify - preserve existing states
             self._update_playlist_track_states(original_playlist, sync_plan.operations)
             
@@ -1188,7 +1188,7 @@ class PlaylistSynchronizer:
         
             
         except Exception as e:
-            operation_logger.error(f"Sync execution failed: {e}")
+            operation_logger.error(f"update execution failed: {e}")
             return SyncResult(
                 success=False,
                 playlist_id=sync_plan.playlist_id,
@@ -1208,11 +1208,11 @@ class PlaylistSynchronizer:
         operations: List[SyncOperation]
     ) -> None:
         """
-        Update playlist track states based on completed sync operations
+        Update playlist track states based on completed update operations
         
         Args:
             playlist: Playlist to update
-            operations: Completed sync operations
+            operations: Completed update operations
         """
         try:
         
@@ -1345,7 +1345,7 @@ class PlaylistSynchronizer:
                 
         except Exception as e:
             self.logger.error(f"Tracklist validation failed: {e}")
-            # Continue without validation - sync will handle inconsistencies
+            # Continue without validation - update will handle inconsistencies
         
         # Detect and apply existing audio format from downloaded files
         try:
@@ -1374,7 +1374,7 @@ class PlaylistSynchronizer:
 
     def _create_or_update_tracklist(self, playlist: SpotifyPlaylist, local_directory: Path) -> None:
         """
-        Create new tracklist or update existing one after sync operations
+        Create new tracklist or update existing one after update operations
         
         Args:
             playlist: Spotify playlist with updated track states
@@ -1916,7 +1916,7 @@ class PlaylistSynchronizer:
         Get synchronizer statistics and configuration
         
         Returns:
-            Dictionary with sync stats
+            Dictionary with update stats
         """
         return {
             'auto_sync': self.auto_sync,

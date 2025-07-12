@@ -1,7 +1,7 @@
-# src/sync/__init__.py
+# src/update/__init__.py
 """
 Synchronization package
-Handles playlist sync logic, tracklist management, and incremental updates
+Handles playlist update logic, tracklist management, and incremental updates
 """
 
 from .tracker import get_tracklist_manager, TracklistManager, TracklistEntry, TracklistMetadata

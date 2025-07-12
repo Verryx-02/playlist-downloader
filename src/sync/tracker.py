@@ -1,5 +1,5 @@
 """
-Tracklist.txt file management for tracking playlist state and sync status
+Tracklist.txt file management for tracking playlist state and update status
 Handles reading, writing, and parsing of playlist tracking files
 """
 import os
@@ -85,7 +85,7 @@ class TracklistManager:
         self.logger = get_logger(__name__)
         
         # File configuration
-        self.backup_tracklist = self.settings.sync.backup_tracklist
+        self.backup_tracklist = self.settings.update.backup_tracklist
         
         # Status icons mapping
         self.status_icons = {
@@ -560,7 +560,7 @@ class TracklistManager:
     
     def get_sync_summary(self, differences: Dict[str, List[Any]]) -> str:
         """
-        Generate human-readable sync summary
+        Generate human-readable update summary
         
         Args:
             differences: Differences from compare_tracklists

@@ -69,7 +69,7 @@ def cli(ctx, version, verbose, config):
     🎵 Playlist-Downloader - Download Spotify playlists with lyrics
     
     A powerful tool to download Spotify playlists locally using YouTube Music,
-    with automatic lyrics integration and intelligent sync capabilities.
+    with automatic lyrics integration and intelligent update capabilities.
     """
     # Ensure context object exists
     ctx.ensure_object(dict)
@@ -235,7 +235,7 @@ def download(playlist_url, output, format, quality, no_lyrics, lyrics_source, co
         settings.download.concurrency = concurrent
     
     
-    # Create sync plan
+    # Create update plan
     with click.progressbar(length=100, label='Analyzing playlist') as bar:
         sync_plan = synchronizer.create_sync_plan(playlist_url)
         bar.update(100)
@@ -247,7 +247,7 @@ def download(playlist_url, output, format, quality, no_lyrics, lyrics_source, co
     logger.console_info(f"🎵 {sync_plan.playlist_name} ({sync_plan.estimated_downloads} tracks to download)")
     
     if dry_run:
-        click.echo("\n🔍 Operations that would be performed:")
+        click.echo("\n Operations that would be performed:")
         for i, operation in enumerate(sync_plan.operations, 1):
             if operation.track:
                 click.echo(f"   {i}. Download: {operation.track.spotify_track.primary_artist} - {operation.track.spotify_track.name}")
@@ -268,23 +268,23 @@ def download(playlist_url, output, format, quality, no_lyrics, lyrics_source, co
     local_directory = settings.get_output_directory() / playlist.name
     local_directory.mkdir(parents=True, exist_ok=True)
     
-    # Execute sync plan
+    # Execute update plan
     result = synchronizer.execute_sync_plan(sync_plan, local_directory)
     
     # Show results
     if result.downloads_failed > 0:
-        logger.console_info(f"✅ {result.downloads_completed} downloaded, {result.downloads_failed} failed")
+        logger.console_info(f" {result.downloads_completed} downloaded, {result.downloads_failed} failed")
     else:
-        logger.console_info(f"✅ {result.downloads_completed} tracks downloaded")
+        logger.console_info(f" {result.downloads_completed} tracks downloaded")
         
     if settings.lyrics.enabled:
-        click.echo(f"   🎵 Lyrics: {result.lyrics_completed}")
-        click.echo(f"   🚫 Lyrics failed: {result.lyrics_failed}")
+        click.echo(f"    Lyrics: {result.lyrics_completed}")
+        click.echo(f"    Lyrics failed: {result.lyrics_failed}")
     
     if result.total_time:
-        click.echo(f"   ⏱️ Total time: {format_duration(result.total_time)}")
+        click.echo(f"    Total time: {format_duration(result.total_time)}")
     
-    click.echo(f"\n📁 Files saved to: {local_directory}")
+    click.echo(f"\n Files saved to: {local_directory}")
     # Force flush output streams
     try:
         sys.stdout.flush()
@@ -298,10 +298,10 @@ def download(playlist_url, output, format, quality, no_lyrics, lyrics_source, co
 @click.argument('playlist_url')
 @click.option('--output', '-o', type=click.Path(), help='Output directory')
 @handle_error
-def sync(playlist_url, output):
-    """🔄 Synchronize an existing playlist"""
+def update(playlist_url, output):
+    """🔄 Updating an existing playlist"""
     
-    click.echo(f"🔄 Synchronizing playlist: {playlist_url}")
+    click.echo(f"🔄 Updating playlist: {playlist_url}")
     
     synchronizer = get_synchronizer()
     
@@ -314,7 +314,7 @@ def sync(playlist_url, output):
         click.echo(f"❌ Error: {status['error']}")
         return
     
-    click.echo(f"\n📋 Playlist Status:")
+    click.echo(f"\n Playlist Status:")
     click.echo(f"   Name: {status['playlist_name']}")
     click.echo(f"   Total tracks: {status['total_tracks']}")
     click.echo(f"   Local directory: {status['local_directory']}")
@@ -324,7 +324,7 @@ def sync(playlist_url, output):
         click.echo("✅ Playlist is already up to date!")
         return
     
-    # Create and execute sync plan
+    # Create and execute update plan
     local_directory = Path(status['local_directory'])
     
     if output:
@@ -333,55 +333,22 @@ def sync(playlist_url, output):
     
     sync_plan = synchronizer.create_sync_plan(playlist_url, local_directory)
     
-    if not click.confirm(f"\nProceed with sync ({sync_plan.estimated_downloads} downloads)?"):
-        click.echo("❌ Sync cancelled")
+    if not click.confirm(f"\nProceed with update ({sync_plan.estimated_downloads} downloads)?"):
+        click.echo("❌ update cancelled")
         return
     
-    click.echo("\n🚀 Starting sync...")
+    click.echo("\n Starting update...")
     result = synchronizer.execute_sync_plan(sync_plan, local_directory)
     
     # Show results
-    click.echo(f"\n📊 Sync Results: {result.summary}")
-
-
-@cli.command()
-@click.argument('playlist_url')
-@handle_error
-def check(playlist_url):
-    """🔍 Check playlist status without downloading"""
-    
-    click.echo(f"🔍 Checking playlist: {playlist_url}")
-    
-    synchronizer = get_synchronizer()
-    
-    with click.progressbar(length=100, label='Analyzing playlist') as bar:
-        status = synchronizer.check_playlist_status(playlist_url)
-        bar.update(100)
-    
-    if 'error' in status:
-        click.echo(f"❌ Error: {status['error']}")
-        return
-    
-    # Show detailed status
-    click.echo(f"\n📋 Playlist Information:")
-    click.echo(f"   📛 Name: {status['playlist_name']}")
-    click.echo(f"   🎵 Total tracks: {status['total_tracks']}")
-    click.echo(f"   📁 Local directory: {status['local_directory']}")
-    click.echo(f"   📄 Tracklist exists: {'Yes' if status['tracklist_exists'] else 'No'}")
-    click.echo(f"   🔄 Needs sync: {'Yes' if status['needs_sync'] else 'No'}")
-    click.echo(f"   📊 Status: {status['sync_summary']}")
-    
-    if status['needs_sync']:
-        click.echo(f"   📥 Downloads needed: {status.get('estimated_downloads', 0)}")
-        if status.get('estimated_time'):
-            click.echo(f"   ⏱️ Estimated time: {format_duration(status['estimated_time'])}")
+    click.echo(f"\n Update Results: {result.summary}")
 
 
 @cli.command()
 @click.option('--show-lyrics', is_flag=True, help='Show lyrics status')
 @handle_error
 def list(show_lyrics):
-    """📋 List local playlists"""
+    """List local playlists"""
     
     settings = get_settings()
     output_dir = settings.get_output_directory()
@@ -397,10 +364,10 @@ def list(show_lyrics):
     tracklist_files = tracklist_manager.find_tracklist_files(output_dir)
     
     if not tracklist_files:
-        click.echo("📂 No playlists found")
+        click.echo("No playlists found")
         return
     
-    click.echo(f"📋 Found {len(tracklist_files)} playlists:\n")
+    click.echo(f"Found {len(tracklist_files)} playlists:\n")
     
     for tracklist_path in tracklist_files:
         try:
@@ -418,14 +385,14 @@ def list(show_lyrics):
                 lyrics_percent = (lyrics_downloaded / total_tracks * 100) if total_tracks > 0 else 0
             
             # Display playlist info
-            click.echo(f"🎵 {metadata.playlist_name}")
-            click.echo(f"   📁 {tracklist_path.parent}")
-            click.echo(f"   📊 {downloaded}/{total_tracks} tracks ({download_percent:.1f}%)")
+            click.echo(f" {metadata.playlist_name}")
+            click.echo(f"   {tracklist_path.parent}")
+            click.echo(f"   {downloaded}/{total_tracks} tracks ({download_percent:.1f}%)")
             
             if show_lyrics and metadata.lyrics_enabled:
-                click.echo(f"   🎵 {lyrics_downloaded}/{total_tracks} lyrics ({lyrics_percent:.1f}%)")
+                click.echo(f"   {lyrics_downloaded}/{total_tracks} lyrics ({lyrics_percent:.1f}%)")
             
-            click.echo(f"   📅 Last modified: {metadata.last_modified}")
+            click.echo(f"   Last modified: {metadata.last_modified}")
             click.echo()
             
         except Exception as e:
@@ -435,7 +402,7 @@ def list(show_lyrics):
 # Lyrics commands
 @cli.group()
 def lyrics():
-    """🎵 Lyrics management"""
+    """Lyrics management"""
     pass
 
 
@@ -476,7 +443,7 @@ def download_lyrics(playlist_url, source):
         click.echo("✅ All tracks already have lyrics!")
         return
     
-    click.echo(f"📥 Downloading lyrics for {len(tracks_needing_lyrics)} tracks...")
+    click.echo(f"Downloading lyrics for {len(tracks_needing_lyrics)} tracks...")
     
     # Download lyrics for each track
     completed = 0
@@ -514,7 +481,7 @@ def download_lyrics(playlist_url, source):
                 logger.error(f"Failed to download lyrics for {entry.artist} - {entry.title}: {e}")
                 failed += 1
     
-    click.echo(f"\n📊 Lyrics Results:")
+    click.echo(f"\nLyrics Results:")
     click.echo(f"   ✅ Completed: {completed}")
     click.echo(f"   ❌ Failed: {failed}")
 
@@ -524,12 +491,12 @@ def download_lyrics(playlist_url, source):
 def sources():
     """Check lyrics sources status"""
     
-    click.echo("🎵 Checking lyrics sources...")
+    click.echo("Checking lyrics sources...")
     
     lyrics_processor = get_lyrics_processor()
     source_status = lyrics_processor.validate_lyrics_sources()
     
-    click.echo("\n📊 Lyrics Sources Status:")
+    click.echo("\nLyrics Sources Status:")
     
     for source, available in source_status.items():
         status_icon = "✅" if available else "❌"
@@ -554,14 +521,14 @@ def show():
     click.echo("⚙️ Current Configuration:\n")
     
     # Download settings
-    click.echo("📥 Download:")
+    click.echo("Download:")
     click.echo(f"   Output directory: {settings.download.output_directory}")
     click.echo(f"   Format: {settings.download.format}")
     click.echo(f"   Quality: {settings.download.quality}")
     click.echo(f"   Concurrent downloads: {settings.download.concurrency}")
     
     # Lyrics settings
-    click.echo("\n🎵 Lyrics:")
+    click.echo("\n Lyrics:")
     click.echo(f"   Enabled: {settings.lyrics.enabled}")
     click.echo(f"   Primary source: {settings.lyrics.primary_source}")
     click.echo(f"   Fallback sources: {', '.join(settings.lyrics.fallback_sources)}")
@@ -569,7 +536,7 @@ def show():
     click.echo(f"   Embed in audio: {settings.lyrics.embed_in_audio}")
     
     # Audio settings
-    click.echo("\n🎧 Audio:")
+    click.echo("\n Audio:")
     click.echo(f"   Trim silence: {settings.audio.trim_silence}")
     click.echo(f"   Normalize: {settings.audio.normalize}")
     click.echo(f"   Sample rate: {settings.audio.sample_rate}Hz")
@@ -631,13 +598,13 @@ def download_liked(output, format, quality, no_lyrics, concurrent, dry_run):
             sys.exit(1)
     
     if not virtual_playlist.tracks:
-        click.echo("📭 No liked songs found!")
+        click.echo(" No liked songs found!")
         return
     
     # Find or create local directory for liked songs
     local_directory = synchronizer._find_liked_songs_directory()
     
-    # Create sync plan using virtual playlist ID
+    # Create update plan using virtual playlist ID
     with click.progressbar(length=100, label='Analyzing liked songs') as bar:
         # Use the synchronizer with our virtual playlist
         sync_plan = synchronizer._create_liked_songs_sync_plan(virtual_playlist, local_directory)
@@ -647,10 +614,10 @@ def download_liked(output, format, quality, no_lyrics, concurrent, dry_run):
         click.echo("✅ All liked songs are already downloaded!")
         return
     
-    logger.console_info(f"🎵 My Liked Songs ({sync_plan.estimated_downloads} tracks to download)")
+    logger.console_info(f"My Liked Songs ({sync_plan.estimated_downloads} tracks to download)")
     
     if dry_run:
-        click.echo("\n🔍 Operations that would be performed:")
+        click.echo("\n Operations that would be performed:")
         for i, operation in enumerate(sync_plan.operations, 1):
             if operation.track:
                 click.echo(f"   {i}. Download: {operation.track.spotify_track.primary_artist} - {operation.track.spotify_track.name}")
@@ -663,7 +630,7 @@ def download_liked(output, format, quality, no_lyrics, concurrent, dry_run):
         click.echo("❌ Download cancelled")
         return
     
-    # Execute sync plan
+    # Execute update plan
     result = synchronizer.execute_liked_songs_sync(virtual_playlist, local_directory)
     
     # Show results
@@ -673,22 +640,22 @@ def download_liked(output, format, quality, no_lyrics, concurrent, dry_run):
         logger.console_info(f"✅ {result.downloads_completed} tracks downloaded")
         
     if settings.lyrics.enabled:
-        click.echo(f"   🎵 Lyrics: {result.lyrics_completed}")
-        click.echo(f"   🚫 Lyrics failed: {result.lyrics_failed}")
+        click.echo(f"   Lyrics: {result.lyrics_completed}")
+        click.echo(f"   Lyrics failed: {result.lyrics_failed}")
     
     if result.total_time:
-        click.echo(f"   ⏱️ Total time: {format_duration(result.total_time)}")
+        click.echo(f"   Total time: {format_duration(result.total_time)}")
     
-    click.echo(f"\n📁 Files saved to: {local_directory}")
+    click.echo(f"\n Files saved to: {local_directory}")
     
 
 @cli.command()
 @click.option('--output', '-o', type=click.Path(), help='Output directory')
 @handle_error
-def sync_liked(output):
-    """🔄 Synchronize your Spotify liked songs"""
+def update_liked(output):
+    """Updating your Spotify liked songs"""
     
-    click.echo("🔄 Synchronizing liked songs...")
+    click.echo("🔄 Updating liked songs...")
     
     # Initialize components
     settings = get_settings()
@@ -709,7 +676,7 @@ def sync_liked(output):
             # Find local directory
             local_directory = synchronizer._find_liked_songs_directory()
             
-            # Check if sync is needed
+            # Check if update is needed
             sync_plan = synchronizer._create_liked_songs_sync_plan(virtual_playlist, local_directory)
             bar.update(100)
             
@@ -718,37 +685,34 @@ def sync_liked(output):
             return
     
     # Show current status
-    click.echo(f"\n📋 Liked Songs Status:")
-    click.echo(f"   📛 Collection: My Liked Songs")
-    click.echo(f"   🎵 Total tracks: {len(virtual_playlist.tracks)}")
-    click.echo(f"   📁 Local directory: {local_directory}")
+    click.echo(f"\n Liked Songs Status:")
+    click.echo(f"     Collection: My Liked Songs")
+    click.echo(f"     Total tracks: {len(virtual_playlist.tracks)}")
+    click.echo(f"     Local directory: {local_directory}")
     
     tracklist_path = local_directory / "tracklist.txt"
-    click.echo(f"   📄 Tracklist exists: {'Yes' if tracklist_path.exists() else 'No'}")
+    click.echo(f"     Tracklist exists: {'Yes' if tracklist_path.exists() else 'No'}")
     
     if not sync_plan.has_changes:
         click.echo("✅ Liked songs are already up to date!")
         return
     
-    # Show what needs sync
-    click.echo(f"   🔄 Needs sync: Yes")
-    click.echo(f"   📥 Downloads needed: {sync_plan.estimated_downloads}")
+    # Show what needs update
+    click.echo(f"     Needs Update: Yes")
+    click.echo(f"     Downloads needed: {sync_plan.estimated_downloads}")
     
-    if sync_plan.estimated_time:
-        click.echo(f"   ⏱️ Estimated time: {format_duration(sync_plan.estimated_time)}")
-    
-    # Confirm sync
-    if not click.confirm(f"\nProceed with sync ({sync_plan.estimated_downloads} downloads)?"):
-        click.echo("❌ Sync cancelled")
+    # Confirm update
+    if not click.confirm(f"\nProceed with update ({sync_plan.estimated_downloads} downloads)?"):
+        click.echo("❌ Update cancelled")
         return
     
-    click.echo("\n🚀 Starting sync...")
+    click.echo("\n🚀 Starting update...")
     
-    # Execute sync
+    # Execute update
     result = synchronizer.execute_liked_songs_sync(virtual_playlist, local_directory)
     
     # Show results
-    click.echo(f"\n📊 Sync Results: {result.summary}")
+    click.echo(f"\n📊 update Results: {result.summary}")
     
     if result.success:
         if result.downloads_completed > 0:
@@ -765,52 +729,7 @@ def sync_liked(output):
         
         click.echo(f"\n📁 Files saved to: {local_directory}")
     else:
-        click.echo(f"❌ Sync failed: {result.error_message}")
-
-@cli.command()
-@handle_error
-def check_liked():
-    """🔍 Check your Spotify liked songs status without downloading"""
-    
-    click.echo("🔍 Checking liked songs status...")
-    
-    # Initialize components
-    spotify_client = get_spotify_client()
-    synchronizer = get_synchronizer()
-    
-    with click.progressbar(length=100, label='Analyzing liked songs') as bar:
-        try:
-            # Get current liked songs
-            virtual_playlist = spotify_client.get_user_saved_tracks()
-            bar.update(50)
-            
-            # Find local directory and check status
-            local_directory = synchronizer._find_liked_songs_directory()
-            sync_plan = synchronizer._create_liked_songs_sync_plan(virtual_playlist, local_directory)
-            bar.update(100)
-            
-        except Exception as e:
-            click.echo(f"❌ Error: {e}")
-            return
-    
-    # Show detailed status
-    click.echo(f"\n📋 Liked Songs Information:")
-    click.echo(f"   📛 Collection: My Liked Songs")
-    click.echo(f"   🎵 Total tracks: {len(virtual_playlist.tracks)}")
-    click.echo(f"   📁 Local directory: {local_directory}")
-    
-    tracklist_path = local_directory / "tracklist.txt"
-    click.echo(f"   📄 Tracklist exists: {'Yes' if tracklist_path.exists() else 'No'}")
-    click.echo(f"   🔄 Needs sync: {'Yes' if sync_plan.has_changes else 'No'}")
-    
-    if sync_plan.has_changes:
-        click.echo(f"   📥 Downloads needed: {sync_plan.estimated_downloads}")
-        if sync_plan.estimated_time:
-            click.echo(f"   ⏱️ Estimated time: {format_duration(sync_plan.estimated_time)}")
-    else:
-        # Show current download status
-        downloaded_count = sum(1 for t in virtual_playlist.tracks if t.audio_status == TrackStatus.DOWNLOADED)
-        click.echo(f"   📊 Status: {downloaded_count}/{len(virtual_playlist.tracks)} tracks downloaded")
+        click.echo(f"❌ update failed: {result.error_message}")
 
 def set(format, quality, output, lyrics_source):
     """Update configuration settings"""
