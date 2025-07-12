@@ -116,7 +116,8 @@ This single command will:
 - Allow script execution (temporarily, for security)
 - Run the automatic installer (installs Chocolatey, Python, FFmpeg, sets up project)
 - Clean up by removing the installer file
-- Enter the project directory
+- Enter the project directory  
+
 You can reed the script [here](https://github.com/Verryx-02/playlist-downloader/blob/main/scripts/install-windows.ps1). 
 </details>
 
@@ -145,6 +146,17 @@ For the manual installation see this guide {NOT WRITTEN YET}
 ```bash
 playlist-dl download "https://open.spotify.com/playlist/YOUR_PLAYLIST_ID"
 ```
+
+<details>
+<summary><strong>How do I find my favourite playlist link?</strong></summary>
+
+- Open Spotify 
+- Go to the playlist you want to download
+- Clic the $...$ icon 
+- Share
+- Copy playlist link
+
+</details>
 
 Options:
 - `--format mp3|flac|m4a`: Audio format (default: m4a)
