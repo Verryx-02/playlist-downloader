@@ -1,4 +1,3 @@
-# src/lyrics/__init__.py
 """
 Lyrics integration package for multi-source lyrics retrieval and processing
 

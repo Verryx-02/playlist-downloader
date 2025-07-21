@@ -4,10 +4,9 @@ Defines structures for storing and manipulating music metadata
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from enum import Enum
-import json
 
 
 class TrackStatus(Enum):
