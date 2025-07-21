@@ -102,7 +102,8 @@ You can reed the script [here](https://github.com/Verryx-02/playlist-downloader/
 ### **Windows automatic installation:**
 
 </div>
-
+  
+> ⚠️ NOT TESTED. USE IT AT YOUR OWN RISK  
 
 Open the Powershell and paste the command below:
 ```bash
