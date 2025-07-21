@@ -59,8 +59,9 @@ A comprehensive tool for downloading Spotify playlists locally with YouTube Musi
 ## Quick Start
 
 </div>
-
-
+  
+> ⚠️ This project is under active development and not ready for production use.
+  
 ### Prerequisites (Will be installed automatically in a virtual environment if they are not)
 
 - Python 3.8+
