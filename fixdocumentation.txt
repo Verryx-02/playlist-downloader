@@ -1,0 +1,14 @@
+IN ESECUZIONE
+Semplificare procedura download
+
+
+PENDING
+aggiungere come creare la app spotify
+sistemare l'url con https
+dire che va selezionato webapi
+Spiegare meglio come yaml
+rinominare togliendo example_
+spiegare meglio la configurazione con la chiave di genius
+spiegare come generare il token 
+segnare il --help
+spiegare il server ssh

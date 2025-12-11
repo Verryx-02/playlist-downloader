@@ -5,9 +5,8 @@ Handles reading, writing, and parsing of playlist tracking files
 import os
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
-from datetime import datetime
 from enum import Enum
 
 from ..config.settings import get_settings
