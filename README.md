@@ -89,10 +89,10 @@ Downloads only tracks that aren't already in the local database.
 ### Download Liked Songs
 
 ```bash
-spot --dl --liked --user-auth
+spot --dl --liked
 ```
 
-Requires `--user-auth` to authenticate with your Spotify account.
+This will open your browser for Spotify authentication (required to access your Liked Songs).
 
 ### Run Phases Separately
 
@@ -128,7 +128,6 @@ Options:
   --2                 Run only PHASE 2 (match on YouTube Music)
   --3                 Run only PHASE 3 (download audio)
   --cookie-file PATH  Path to cookies.txt for YouTube Premium
-  --user-auth         Enable Spotify user authentication
   --version           Show version and exit
   --help              Show this message and exit
 ```

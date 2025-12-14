@@ -15,7 +15,6 @@ Commands:
 
 Options:
     --cookie-file <path>                Path to cookies.txt for YT Premium
-    --user-auth                         Enable Spotify user authentication
 
 Usage:
     # Download entire playlist
@@ -24,8 +23,8 @@ Usage:
     # Sync mode (download only new tracks)
     spot --dl --url "https://open.spotify.com/playlist/..." --sync
     
-    # Download liked songs (requires --user-auth)
-    spot --dl --liked --user-auth
+    # Download liked songs
+    spot --dl --liked
     
     # Run phases separately
     spot --dl --1 --url "https://..."   # Fetch Spotify metadata
@@ -119,11 +118,6 @@ __version__ = "0.1.0"
     help="Path to cookies.txt for YouTube Music Premium quality."
 )
 @click.option(
-    "--user-auth",
-    is_flag=True,
-    help="Enable Spotify user authentication (required for --liked)."
-)
-@click.option(
     "--version",
     is_flag=True,
     help="Show version and exit."
@@ -152,7 +146,7 @@ def cli(
     Examples:
         spot --dl --url "https://open.spotify.com/playlist/..."
         spot --dl --url "https://..." --sync
-        spot --dl --liked --user-auth
+        spot --dl --liked
     """
     # Handle --version
     if version:
@@ -171,10 +165,6 @@ def cli(
     
     if url and liked:
         raise click.UsageError("Cannot use both --url and --liked")
-    
-    # --liked requires --user-auth
-    if liked and not user_auth:
-        raise click.UsageError("--liked requires --user-auth for Spotify login")
     
     # Phase flags are mutually exclusive
     phase_flags = [phase1_only, phase2_only, phase3_only]
@@ -195,7 +185,7 @@ def cli(
     ctx.obj["run_phase2"] = run_phase2
     ctx.obj["run_phase3"] = run_phase3
     ctx.obj["cookie_file"] = cookie_file
-    ctx.obj["user_auth"] = user_auth
+    ctx.obj["user_auth"] = liked  # True se --liked, False otherwise
     
     # Run the download
     _run_download(ctx.obj)
