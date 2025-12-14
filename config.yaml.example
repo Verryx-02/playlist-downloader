@@ -9,7 +9,7 @@ spotify:
 output:
   # Directory where downloaded files will be saved
   # Supports ~ for home directory
-  directory: "~/Music/SpotDownloader"
+  directory: "~/Desktop/Music/SpotDownloader"
 
 download:
   # Number of parallel download threads (1-8 recommended)

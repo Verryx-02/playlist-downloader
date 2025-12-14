@@ -71,10 +71,10 @@ dev = [
 spot = "spot_downloader.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/spot-downloader/spot-downloader"
-Documentation = "https://github.com/spot-downloader/spot-downloader#readme"
-Repository = "https://github.com/spot-downloader/spot-downloader"
-Issues = "https://github.com/spot-downloader/spot-downloader/issues"
+Homepage = "https://github.com/Verryx-02/spot_downloader"
+Documentation = "https://github.com/Verryx-02/spot_downloader#readme"
+Repository = "https://github.com/Verryx-02/spot_downloader"
+Issues = "https://github.com/Verryx-02/spot_downloader/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

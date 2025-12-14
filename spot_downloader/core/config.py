@@ -20,7 +20,7 @@ Example config.yaml:
       client_secret: "your_client_secret_here"
     
     output:
-      directory: "~/Music/SpotDownloader"
+      directory: "~/Desktop/Music/SpotDownloader"
     
     download:
       threads: 4

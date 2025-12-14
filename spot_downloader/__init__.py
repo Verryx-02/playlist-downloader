@@ -66,7 +66,7 @@ Configuration:
           client_secret: "your_client_secret"
         
         output:
-          directory: "~/Music/SpotDownloader"
+          directory: "~/Desktop/Music/SpotDownloader"
         
         download:
           threads: 4
