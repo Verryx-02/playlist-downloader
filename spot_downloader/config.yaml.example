@@ -1,0 +1,22 @@
+# spot-downloader configuration
+# Copy this file to config.yaml and fill in your credentials
+
+spotify:
+  # Get these from https://developer.spotify.com/dashboard
+  client_id: "your_spotify_client_id_here"
+  client_secret: "your_spotify_client_secret_here"
+
+output:
+  # Directory where downloaded files will be saved
+  # Supports ~ for home directory
+  directory: "~/Music/SpotDownloader"
+
+download:
+  # Number of parallel download threads (1-8 recommended)
+  threads: 4
+  
+  # Optional: Path to cookies.txt for YouTube Music Premium quality (256 kbps)
+  # Export cookies from music.youtube.com using browser extension "Get cookies.txt"
+  # Without cookies, downloads are limited to 128 kbps
+  cookie_file: null
+  # cookie_file: "~/.config/spot-downloader/cookies.txt"
