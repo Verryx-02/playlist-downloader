@@ -6,9 +6,9 @@ Download Spotify playlists via YouTube Music in M4A format with full metadata.
 
 spot_downloader converts Spotify playlists to local M4A audio files by:
 
-1. **PHASE 1**: Fetching track metadata from Spotify (title, artist, album, cover, etc.)
-2. **PHASE 2**: Matching each track on YouTube Music using fuzzy search
-3. **PHASE 3**: Downloading audio and embedding metadata
+**PHASE 1**: Fetching track metadata from Spotify (title, artist, album, cover, etc.)
+**PHASE 2**: Matching each track on YouTube Music using fuzzy search
+**PHASE 3**: Downloading audio and embedding metadata
 
 The result is a collection of properly tagged M4A files ready for any music player.
 
