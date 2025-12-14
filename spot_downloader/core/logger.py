@@ -165,7 +165,8 @@ class FailedTrackHandler(logging.Handler):
             1. Check if record has 'failed_track_name' attribute
             2. If not present, ignore the record (return immediately)
             3. If present, extract track info and write to report file
-            4. Format: "Track Name - Artist Name\\nSpotify URL\\n\\n"
+            4. Format: "{number}-{track_name}-{artist}.m4a\\nSpotify URL\\n\\n"
+               If number is None, omit it from the filename.
         
         Thread Safety:
             Writes are NOT automatically thread-safe. The file should be
@@ -290,7 +291,8 @@ def log_failed_track(
     track_name: str,
     artist: str,
     spotify_url: str,
-    error_message: str
+    error_message: str,
+    assigned_number: int | None = None
 ) -> None:
     """
     Log a failed track with proper formatting for the report file.
@@ -304,6 +306,8 @@ def log_failed_track(
         artist: The artist name.
         spotify_url: The Spotify URL for the track.
         error_message: Description of why the track failed.
+        assigned_number: Track number that would have been used in filename.
+                        Used to show complete filename in report.
     
     Behavior:
         Logs an ERROR level message with the error_message, and attaches

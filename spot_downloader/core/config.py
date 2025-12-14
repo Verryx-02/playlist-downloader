@@ -52,8 +52,7 @@ class SpotifyConfig:
         client_id: The Spotify application client ID.
                    A 32-character hexadecimal string.
         client_secret: The Spotify application client secret.
-                       A 32-character hexadecimal string.
-                       Keep this value secure and never commit to version control.
+                   A 32-character hexadecimal string.
     """
     client_id: str
     client_secret: str

@@ -8,6 +8,7 @@ Commands:
     spot --dl --url <playlist_url>      Download a playlist
     spot --dl --liked                   Download liked songs
     spot --dl --url <url> --sync        Sync mode (only new tracks)
+    spot --dl --url <url> --dry-run     Dry run (fetch and match, no download)
     spot --dl --liked --sync            Sync liked songs
     spot --dl --1 --url <url>           Run only PHASE 1 (fetch metadata)
     spot --dl --2 --url <url>           Run only PHASE 2 (YouTube match)
@@ -118,6 +119,11 @@ __version__ = "0.1.0"
     help="Path to cookies.txt for YouTube Music Premium quality."
 )
 @click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Simulate download: run PHASE 1 and 2, skip PHASE 3. Shows match report."
+)
+@click.option(
     "--version",
     is_flag=True,
     help="Show version and exit."
@@ -133,7 +139,7 @@ def cli(
     phase2_only: bool,
     phase3_only: bool,
     cookie_file: Optional[Path],
-    user_auth: bool,
+    dry_run: bool,
     version: bool
 ) -> None:
     """
@@ -171,10 +177,14 @@ def cli(
     if sum(phase_flags) > 1:
         raise click.UsageError("Only one phase flag (--1, --2, --3) can be used")
     
+    # --dry-run is incompatible with phase flags
+    if dry_run and any(phase_flags):
+        raise click.UsageError("Cannot use --dry-run with phase flags (--1, --2, --3)")
+    
     # Determine which phases to run
     run_phase1 = not phase2_only and not phase3_only
     run_phase2 = not phase1_only and not phase3_only
-    run_phase3 = not phase1_only and not phase2_only
+    run_phase3 = not phase1_only and not phase2_only and not dry_run
     
     # Store in context for the command
     ctx.ensure_object(dict)
@@ -186,6 +196,7 @@ def cli(
     ctx.obj["run_phase3"] = run_phase3
     ctx.obj["cookie_file"] = cookie_file
     ctx.obj["user_auth"] = liked  # True se --liked, False otherwise
+    ctx.obj["dry_run"] = dry_run
     
     # Run the download
     _run_download(ctx.obj)

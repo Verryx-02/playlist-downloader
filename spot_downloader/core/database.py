@@ -557,7 +557,8 @@ class Database:
             Acquires _lock for the duration of the calculation.
         
         Note:
-            Track numbers are embedded in filenames: {num}-{title}-{artist}.m4a
-            This method parses existing filenames to determine the next number.
+            Track numbers are stored in the track data as 'assigned_number'.
+            This method finds the maximum assigned_number across all tracks
+            in the playlist and returns max + 1.
         """
         raise NotImplementedError("Contract only - implementation pending")

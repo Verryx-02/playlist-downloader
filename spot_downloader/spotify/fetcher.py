@@ -42,6 +42,45 @@ from spot_downloader.spotify.models import LikedSongs, Playlist, Track
 
 logger = get_logger(__name__)
 
+def _assign_track_numbers(
+    tracks: list[Track],
+    existing_max_number: int = 0
+) -> list[Track]:
+    """
+    Assign track numbers based on chronological order of addition.
+    
+    Tracks are sorted by added_at timestamp (oldest first) and assigned
+    sequential numbers. This ensures that the oldest track gets number 1
+    (or existing_max + 1 in sync mode) and the newest gets the highest number.
+    
+    Args:
+        tracks: List of Track objects with added_at field set.
+        existing_max_number: Highest track number already in database.
+                            New tracks will start from this + 1.
+                            Use 0 for initial fetch.
+    
+    Returns:
+        New list of Track objects with assigned_number set.
+        Original Track objects are not modified (they're frozen).
+    
+    Note:
+        Tracks without added_at are sorted to the end.
+    """
+    from dataclasses import replace
+    
+    # Sort by added_at (oldest first, None values at end)
+    sorted_tracks = sorted(
+        tracks,
+        key=lambda t: t.added_at or "9999-99-99T99:99:99Z"
+    )
+    
+    # Assign numbers starting from existing_max + 1
+    result = []
+    for i, track in enumerate(sorted_tracks):
+        new_track = replace(track, assigned_number=existing_max_number + i + 1)
+        result.append(new_track)
+    
+    return result
 
 class SpotifyFetcher:
     """

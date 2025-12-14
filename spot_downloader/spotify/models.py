@@ -100,6 +100,16 @@ class Track:
         
         copyright_text: Copyright notice from the album.
                         Example: "(C) 1975 Queen Productions Ltd."
+
+        assigned_number: Track number assigned for file naming.
+                         This is calculated based on chronological order of addition
+                         to the playlist (oldest = 1, newest = N).
+                         None until assigned during PHASE 1.
+                         Example: 42
+
+        added_at: ISO timestamp of when the track was added to the playlist.
+                  Used for sorting tracks chronologically.
+                  Example: "2024-01-15T10:30:00Z"
     
     Class Methods:
         from_spotify_api: Create Track from Spotify API response dict.
@@ -138,6 +148,9 @@ class Track:
     genres: tuple[str, ...] = field(default_factory=tuple)
     publisher: str = ""
     copyright_text: str = ""
+    assigned_number: int | None = None
+    added_at: str | None = None
+
     
     @classmethod
     def from_spotify_api(
