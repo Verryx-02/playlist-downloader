@@ -5,32 +5,32 @@ This module implements the CLI using Click, providing all commands
 for downloading Spotify playlists via YouTube Music.
 
 Commands:
-    spot --dl --url <playlist_url>      Download a playlist
-    spot --dl --liked                   Download liked songs
-    spot --dl --url <url> --sync        Sync mode (only new tracks)
-    spot --dl --url <url> --dry-run     Dry run (fetch and match, no download)
-    spot --dl --liked --sync            Sync liked songs
-    spot --dl --1 --url <url>           Run only PHASE 1 (fetch metadata)
-    spot --dl --2 --url <url>           Run only PHASE 2 (YouTube match)
-    spot --dl --3 --url <url>           Run only PHASE 3 (download)
+    spot --url <playlist_url>      Download a playlist
+    spot --liked                   Download liked songs
+    spot --url <url> --sync        Sync mode (only new tracks)
+    spot --url <url> --dry-run     Dry run (fetch and match, no download)
+    spot --liked --sync            Sync liked songs
+    spot --1 --url <url>           Run only PHASE 1 (fetch metadata)
+    spot --2 --url <url>           Run only PHASE 2 (YouTube match)
+    spot --3 --url <url>           Run only PHASE 3 (download)
 
 Options:
     --cookie-file <path>                Path to cookies.txt for YT Premium
 
 Usage:
     # Download entire playlist
-    spot --dl --url "https://open.spotify.com/playlist/..."
+    spot --url "https://open.spotify.com/playlist/..."
     
     # Sync mode (download only new tracks)
-    spot --dl --url "https://open.spotify.com/playlist/..." --sync
+    spot --url "https://open.spotify.com/playlist/..." --sync
     
     # Download liked songs
-    spot --dl --liked
+    spot --liked
     
     # Run phases separately
-    spot --dl --1 --url "https://..."   # Fetch Spotify metadata
-    spot --dl --2 --url "https://..."   # Match on YouTube
-    spot --dl --3 --url "https://..."   # Download and process
+    spot --1 --url "https://..."   # Fetch Spotify metadata
+    spot --2 --url "https://..."   # Match on YouTube
+    spot --3 --url "https://..."   # Download and process
 
 Configuration:
     The CLI requires a config.yaml file in the current directory with:
@@ -76,11 +76,6 @@ __version__ = "0.1.0"
 
 
 @click.group(invoke_without_command=True)
-@click.option(
-    "--dl",
-    is_flag=True,
-    help="Download mode. Required for all download operations."
-)
 @click.option(
     "--url",
     type=str,
@@ -131,7 +126,6 @@ __version__ = "0.1.0"
 @click.pass_context
 def cli(
     ctx: click.Context,
-    dl: bool,
     url: Optional[str],
     liked: bool,
     sync: bool,
@@ -150,19 +144,13 @@ def cli(
     
     \b
     Examples:
-        spot --dl --url "https://open.spotify.com/playlist/..."
-        spot --dl --url "https://..." --sync
-        spot --dl --liked
+        spot --url "https://open.spotify.com/playlist/..."
+        spot --url "https://..." --sync
+        spot --liked
     """
     # Handle --version
     if version:
         click.echo(f"spot-downloader {__version__}")
-        ctx.exit(0)
-    
-    # Validate options
-    if not dl:
-        # No --dl flag, show help
-        click.echo(ctx.get_help())
         ctx.exit(0)
     
     # Must have either --url or --liked
