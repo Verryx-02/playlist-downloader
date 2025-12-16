@@ -23,7 +23,7 @@ from spot_downloader.core.config import (
     SpotifyConfig,
     load_config,
 )
-from spot_downloader.core.database import Database, LIKED_SONGS_KEY
+from spot_downloader.core.database import Database, LIKED_SONGS_KEY, YOUTUBE_MATCH_FAILED
 from spot_downloader.core.exceptions import (
     ConfigError,
     DatabaseError,
@@ -52,6 +52,7 @@ __all__ = [
     # Database
     "Database",
     "LIKED_SONGS_KEY",
+    "YOUTUBE_MATCH_FAILED",
     # Exceptions
     "SpotDownloaderError",
     "ConfigError",

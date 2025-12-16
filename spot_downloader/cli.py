@@ -202,6 +202,13 @@ def cli(
     if url and liked:
         raise click.UsageError("Cannot use both --url and --liked")
     
+    # Validate URL is a playlist URL (not track, album, or artist)
+    if url and "/playlist/" not in url:
+        raise click.UsageError(
+            "--url must be a Spotify playlist URL (containing '/playlist/'). "
+            "For tracks, albums, or artists, use the appropriate Spotify feature."
+        )
+    
     # Phase flags are mutually exclusive
     phase_flags = [phase1_only, phase2_only, phase3_only, phase4_only, phase5_only]
     if sum(phase_flags) > 1:

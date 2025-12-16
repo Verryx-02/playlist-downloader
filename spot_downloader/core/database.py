@@ -94,6 +94,8 @@ DATABASE_VERSION = 1
 # Special key for liked songs (not a real playlist ID)
 LIKED_SONGS_KEY = "__liked_songs__"
 
+# Special value for youtube_url when match failed (distinguishes from None = not yet matched)
+YOUTUBE_MATCH_FAILED = "MATCH_FAILED"
 
 class Database:
     """
@@ -512,8 +514,8 @@ class Database:
             track_id: The Spotify track ID.
         
         Behavior:
-            - Set youtube_url = "" (empty string, not None)
-            - This distinguishes "not yet matched" from "match failed"
+            - Set youtube_url = YOUTUBE_MATCH_FAILED
+            - This distinguishes "not yet matched" (None) from "match failed"
             - Save to disk
         
         Raises:
@@ -523,9 +525,12 @@ class Database:
             Acquires _lock for the entire operation.
         
         Note:
-            Tracks with youtube_url = "" will NOT be returned by
-            get_tracks_without_youtube_url() (which checks for None).
+            Tracks with youtube_url = YOUTUBE_MATCH_FAILED will NOT be
+            returned by get_tracks_without_youtube_url() (which checks for None).
             This prevents repeatedly trying to match unmatchable tracks.
+        
+        See Also:
+            YOUTUBE_MATCH_FAILED: The constant value used to mark failures.
         """
         raise NotImplementedError("Contract only - implementation pending")
     
@@ -774,14 +779,17 @@ class Database:
         Returns:
             Dictionary with counts:
             - total: Total number of tracks
-            - matched: Tracks with youtube_url (not None and not "")
+            - matched: Tracks with youtube_url set (not None and not YOUTUBE_MATCH_FAILED)
             - downloaded: Tracks with downloaded=True
-            - failed_match: Tracks with youtube_url="" (match failed)
+            - failed_match: Tracks with youtube_url=YOUTUBE_MATCH_FAILED
             - pending_match: Tracks with youtube_url=None
             - pending_download: Tracks matched but not downloaded
         
         Thread Safety:
             Acquires _lock and computes stats from current data.
+        
+        See Also:
+            YOUTUBE_MATCH_FAILED: The constant value used to identify failed matches.
         """
         raise NotImplementedError("Contract only - implementation pending")
     

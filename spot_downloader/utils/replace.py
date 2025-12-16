@@ -54,30 +54,32 @@ def replace_track_audio(
         cookie_file: Optional path to cookies.txt for Premium quality.
     
     Raises:
-        FileNotFoundError: If m4a_path doesn't exist.
         MetadataError: If the file is not a valid M4A or metadata
                        cannot be read/written.
         DownloadError: If the YouTube download fails.
     
     Behavior:
-        1. Validate m4a_path exists and is readable
-        2. Extract all metadata from the existing M4A file:
+        1. Extract all metadata from the existing M4A file:
            - Title, artist, album, album artist
            - Track number, disc number
            - Year, genre, copyright
            - Cover art (as bytes)
            - Lyrics (if present)
            - ISRC, explicit flag
-        3. Download audio from youtube_url to a temp file
-        4. Convert to M4A format
-        5. Write all extracted metadata to the new M4A
-        6. Atomically replace the original file
-        7. Clean up temp files
+        2. Download audio from youtube_url to a temp file
+        3. Convert to M4A format
+        4. Write all extracted metadata to the new M4A
+        5. Atomically replace the original file
+        6. Clean up temp files
     
     Atomicity:
         The replacement is atomic - if any step fails, the original
         file is left untouched. The new file is written to a temp
         location and only moved to the final path on success.
+    
+    Note:
+        File existence is validated by Click before this function is called
+        when used via the CLI (--replace option uses exists=True).
     
     Example:
         # User found the correct version on YouTube

@@ -114,8 +114,7 @@ class YouTubeMatcher:
             database: Database instance for storing match results.
         
         Behavior:
-            Creates a ytmusicapi.YTMusic client with German language
-            (mirrors spotDL configuration for consistency).
+            Creates a ytmusicapi.YTMusic client with English language.
         """
         raise NotImplementedError("Contract only - implementation pending")
     
