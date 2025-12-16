@@ -271,6 +271,38 @@ class Database:
         """
         raise NotImplementedError("Contract only - implementation pending")
     
+    def get_active_playlist_id(self) -> str | None:
+        """
+        Get the most recently synced playlist ID.
+        
+        Used when running phases 2-5 without --url to determine
+        which playlist to process.
+        
+        Returns:
+            The playlist_id with the most recent last_synced timestamp,
+            or None if no playlists exist in the database.
+        
+        Behavior:
+            1. Iterate through all playlists (including LIKED_SONGS_KEY if present)
+            2. Compare last_synced timestamps
+            3. Return the playlist_id with the newest timestamp
+            4. If database has no playlists, return None
+        
+        Thread Safety:
+            Acquires _lock for the duration of the read.
+        
+        Use Case:
+            When user runs `spot --2` or `spot --3` without specifying
+            --url or --liked, this method determines which playlist
+            to continue processing.
+        
+        Example:
+            playlist_id = database.get_active_playlist_id()
+            if playlist_id is None:
+                raise click.UsageError("No playlist in database. Run --1 first.")
+        """
+        raise NotImplementedError("Contract only - implementation pending")
+    
     # =========================================================================
     # Track Operations
     # =========================================================================

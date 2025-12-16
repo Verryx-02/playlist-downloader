@@ -85,21 +85,15 @@ def embed_metadata_phase5(
            b. Reconstruct Track object from database metadata
            c. Create Lyrics object if lyrics_text exists
            d. Call embedder.embed_metadata()
-           e. Generate final filename: {assigned_number}-{title}-{artist}.m4a
-           f. Rename file to final name
-           g. Update database: file_path, metadata_embedded, lyrics_embedded
+           e. Update database: metadata_embedded=True, lyrics_embedded (if applicable)
         4. Log summary statistics
         5. Return stats
     
     File Naming:
-        Files are renamed from their temporary names (set in PHASE 3)
-        to the final format: {assigned_number}-{title}-{artist}.m4a
-        
-        The assigned_number is determined in PHASE 1 based on the
-        chronological order of when tracks were added to the playlist.
+        Files already have their final names from PHASE 3.
+        This phase does NOT rename files, only embeds metadata.
     
     Database Updates:
-        - Updates file_path to the new renamed path
         - Sets metadata_embedded=True
         - Sets lyrics_embedded=True if lyrics were embedded
     
@@ -110,24 +104,22 @@ def embed_metadata_phase5(
     """
     raise NotImplementedError("Contract only - implementation pending")
 
-
 def _embed_single_track(
     embedder: MetadataEmbedder,
     track_data: dict[str, Any],
     output_dir: Path
-) -> tuple[bool, Path | None, bool]:
+) -> tuple[bool, bool]:
     """
     Embed metadata into a single track's M4A file.
     
     Args:
         embedder: MetadataEmbedder instance.
         track_data: Track data from database.
-        output_dir: Output directory for renamed files.
+        output_dir: Output directory (for reference, file path comes from database).
     
     Returns:
         Tuple of:
         - success: bool - True if embedding succeeded
-        - new_path: Path | None - New file path after rename, or None if failed
         - had_lyrics: bool - True if lyrics were embedded
     
     Behavior:
@@ -135,33 +127,10 @@ def _embed_single_track(
         2. Reconstruct Track object from track_data
         3. Create Lyrics object if track_data['lyrics_text'] exists
         4. Call embedder.embed_metadata()
-        5. Generate final filename
-        6. Rename file
-        7. Return results
-    """
-    raise NotImplementedError("Contract only - implementation pending")
-
-
-def _generate_final_filename(
-    assigned_number: int,
-    title: str,
-    artist: str,
-    extension: str = "m4a"
-) -> str:
-    """
-    Generate the final filename for a track.
+        5. Return results
     
-    Args:
-        assigned_number: Track number (from chronological playlist order).
-        title: Track title (will be sanitized).
-        artist: Artist name (will be sanitized).
-        extension: File extension without dot.
-    
-    Returns:
-        Filename in format: {number}-{title}-{artist}.{extension}
-    
-    Example:
-        _generate_final_filename(42, "Hello: World", "AC/DC")
-        # Returns: "42-Hello_ World-AC_DC.m4a"
+    Note:
+        This function does NOT rename files. Files already have
+        their final names from PHASE 3.
     """
     raise NotImplementedError("Contract only - implementation pending")

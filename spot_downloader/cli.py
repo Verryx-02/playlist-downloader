@@ -289,10 +289,18 @@ def _run_download(options: dict) -> None:
         _initialize_spotify(config, options["user_auth"])
         
         # Determine playlist ID
+        # Phase 1 requires --url or --liked explicitly
+        # Phases 2-5 can work from database if no --url/--liked provided
         if options["liked"]:
             playlist_id = LIKED_SONGS_KEY
-        else:
+        elif options["url"]:
             playlist_id = extract_playlist_id(options["url"])
+        else:
+            # Running phase 2-5 without --url: get from database
+            playlist_id = database.get_active_playlist_id()
+            if playlist_id is None:
+                click.echo("No playlist found in database. Run with --url first.", err=True)
+                sys.exit(1)
         
         # Override cookie file from CLI if provided
         cookie_file = options["cookie_file"] or config.download.cookie_file
@@ -323,6 +331,20 @@ def _run_download(options: dict) -> None:
                 output_dir=config.output.directory,
                 cookie_file=cookie_file,
                 num_threads=config.download.threads
+            )
+        
+        if options["run_phase4"]:
+            _run_phase4(
+                database=database,
+                playlist_id=playlist_id,
+                num_threads=config.download.threads
+            )
+
+        if options["run_phase5"]:
+            _run_phase5(
+                database=database,
+                playlist_id=playlist_id,
+                output_dir=config.output.directory
             )
         
         # Final statistics
@@ -467,7 +489,7 @@ def _run_phase3(
     num_threads: int
 ) -> None:
     """
-    Run PHASE 3: Download audio files only.
+    Run PHASE 3: Download audio files.
     
     Args:
         database: Database instance.
@@ -482,20 +504,26 @@ def _run_phase3(
         3. For each track:
            a. Download audio from YouTube using yt-dlp
            b. Convert to M4A format
-           c. Save with temporary filename (will be renamed in phase 5)
+           c. Save with final filename: {assigned_number}-{title}-{artist}.m4a
            d. Update database: downloaded=True, file_path, download_timestamp
         4. Log download statistics
         5. Write failures to download_failures.log
     
+    File Naming:
+        Files are saved directly with their final name using the
+        assigned_number from PHASE 1 (based on chronological order
+        of when tracks were added to the playlist).
+        
+        Format: {assigned_number}-{title}-{artist}.m4a
+        Example: 42-Bohemian Rhapsody-Queen.m4a
+    
     Important:
         This phase does NOT fetch lyrics or embed metadata.
-        Those operations are now handled by PHASE 4 and PHASE 5.
-        The file is saved with a temporary name like "temp_{track_id}.m4a"
-        and will be renamed to the final format in PHASE 5.
+        Those operations are handled by PHASE 4 and PHASE 5.
     
     Database Updates:
         - Sets downloaded=True
-        - Sets file_path to temporary file location
+        - Sets file_path to the final file location
         - Sets download_timestamp
     """
     raise NotImplementedError("Contract only - implementation pending")

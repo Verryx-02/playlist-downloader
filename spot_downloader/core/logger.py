@@ -3,9 +3,10 @@ Logging configuration for spot-downloader.
 
 This module sets up the logging system with multiple outputs:
     - Console: Real-time progress with tqdm-compatible formatting
-    - log_full.txt: Complete log of all events (DEBUG and above)
-    - log_errors.txt: Only ERROR and CRITICAL level messages
-    - report.txt: Failed track names with Spotify URLs (human-readable list)
+    - log_full.log: Complete log of all events (DEBUG and above)
+    - log_errors.log: Only ERROR and CRITICAL level messages
+    - download_failures.log: Failed download track names with Spotify URLs
+    - lyrics_failures.log: Tracks where lyrics were not found
 
 The logging system follows the principle: everything to screen is also saved
 to file, then filtered into specialized files.
