@@ -789,34 +789,54 @@ class Database:
     # Utility
     # =========================================================================
     
+    def get_max_assigned_number(self, playlist_id: str) -> int:
+        """
+        Get the highest assigned_number for tracks in a playlist.
+        
+        Args:
+            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
+        
+        Returns:
+            The maximum assigned_number across all tracks in the playlist.
+            Returns 0 if no tracks exist or no tracks have assigned_number.
+        
+        Behavior:
+            - Iterates through all tracks in the playlist
+            - Finds the highest assigned_number value
+            - Returns 0 if playlist is empty or no tracks have numbers
+        
+        Thread Safety:
+            Acquires _lock for the duration of the read.
+        
+        Use Case:
+            Used in sync mode by _assign_track_numbers() to determine
+            the starting number for newly added tracks.
+        
+        Example:
+            max_num = database.get_max_assigned_number(playlist_id)
+            # If max_num is 42, new tracks start from 43
+        """
+        raise NotImplementedError("Contract only - implementation pending")
+    
     def get_next_track_number(self, playlist_id: str) -> int:
         """
         Get the next track number for file naming.
-        
-        The track number is based on download order, not playlist position.
-        Tracks downloaded earlier get lower numbers.
         
         Args:
             playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
         
         Returns:
             The next track number to use (1-indexed).
-            This is max(existing_numbers) + 1, or 1 if no tracks downloaded.
+            This is get_max_assigned_number() + 1.
         
         Behavior:
-            - Examines all tracks with downloaded=True
-            - Finds the highest track number from file names
-            - Returns that number + 1
-            - If no tracks downloaded, returns 1
+            Returns get_max_assigned_number(playlist_id) + 1.
+            Returns 1 if no tracks exist.
         
         Thread Safety:
             Acquires _lock for the duration of the calculation.
         
         Note:
-            Track numbers are stored in the track data as 'assigned_number'.
-            This method finds the maximum assigned_number across all tracks
-            in the playlist and returns max + 1.
+            This is a convenience wrapper around get_max_assigned_number().
         """
         raise NotImplementedError("Contract only - implementation pending")
-    
-    

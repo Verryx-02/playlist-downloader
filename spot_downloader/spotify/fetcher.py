@@ -163,10 +163,14 @@ class SpotifyFetcher:
                c. Fetch additional artist data (for genres)
                d. Fetch additional album data (for detailed metadata)
                e. Create Track object
-            4. Create/update playlist entry in database
-            5. Add all tracks to database
-            6. If sync_mode, filter to only new tracks
-            7. Return Playlist and track list
+            4. Assign track numbers using _assign_track_numbers():
+               - Sort tracks by added_at (oldest first)
+               - In sync_mode: get existing max from database, start from max+1
+               - In full fetch: start from 1
+            5. Create/update playlist entry in database
+            6. Add all tracks to database
+            7. If sync_mode, filter to only new tracks
+            8. Return Playlist and track list
         
         Database Changes:
             - Creates playlist entry if not exists
@@ -207,7 +211,7 @@ class SpotifyFetcher:
                 - list[Track]: Tracks to process in subsequent phases
         
         Raises:
-            SpotifyError: If user auth not enabled (--user-auth required).
+            SpotifyError: If user auth not enabled.
             SpotifyError: If authentication failed or network error.
         
         Behavior:
@@ -217,10 +221,11 @@ class SpotifyFetcher:
                a. Extract track data from saved track object
                b. Fetch additional artist/album data
                c. Create Track object
-            4. Ensure liked_songs section exists in database
-            5. Add all tracks to database
-            6. If sync_mode, filter to only new tracks
-            7. Return LikedSongs and track list
+            4. Assign track numbers based on added_at (oldest first)
+            5. Ensure liked_songs section exists in database
+            6. Add all tracks to database
+            7. If sync_mode, filter to only new tracks
+            8. Return LikedSongs and track list
         
         Database Changes:
             - Creates liked_songs section if not exists
@@ -228,8 +233,8 @@ class SpotifyFetcher:
             - Adds all tracks (preserves existing youtube_url and downloaded status)
         
         Note:
-            Liked Songs requires user authentication. The user must run
-            with --user-auth flag for SpotifyClient to have access.
+            Liked Songs requires user authentication. When --liked flag
+            is used, user_auth is automatically enabled by the CLI.
         """
         raise NotImplementedError("Contract only - implementation pending")
     

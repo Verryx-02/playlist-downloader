@@ -344,7 +344,8 @@ def _run_download(options: dict) -> None:
             _run_phase5(
                 database=database,
                 playlist_id=playlist_id,
-                output_dir=config.output.directory
+                output_dir=config.output.directory,
+                num_threads=config.download.threads
             )
         
         # Final statistics
@@ -566,7 +567,8 @@ def _run_phase4(
 def _run_phase5(
     database: Database,
     playlist_id: str,
-    output_dir: Path
+    output_dir: Path,
+    num_threads: int = 4
 ) -> None:
     """
     Run PHASE 5: Embed metadata and lyrics into M4A files.
@@ -575,11 +577,13 @@ def _run_phase5(
         database: Database instance.
         playlist_id: Playlist ID for database queries.
         output_dir: Directory containing the M4A files.
+        num_threads: Number of parallel embedding threads.
+                    Cover art download benefits from parallelization.
     
     Behavior:
         1. Log phase start
         2. Get tracks that are downloaded but don't have metadata_embedded=True
-        3. For each track:
+        3. For each track (parallel with num_threads):
            a. Load file from file_path in database
            b. Embed all Spotify metadata (title, artist, album, cover, etc.)
            c. If lyrics_text exists in database, embed lyrics

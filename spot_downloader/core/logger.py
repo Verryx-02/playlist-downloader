@@ -339,10 +339,18 @@ def setup_logging(output_dir: Path) -> None:
            - Format: Full with timestamp
         6. Create and configure download failed track handler
            - Path: output_dir/download_failures.log
-           - Listens for 'download_failed_track_*' extra fields
+           - Listens for these extra fields in log records:
+             * download_failed_track_name: str - Track title
+             * download_failed_track_artist: str - Artist name
+             * download_failed_track_url: str - Spotify URL
+             * download_failed_track_number: int | None - Assigned number
         7. Create and configure lyrics failed track handler
            - Path: output_dir/lyrics_failures.log
-           - Listens for 'lyrics_failed_track_*' extra fields
+           - Listens for these extra fields in log records:
+             * lyrics_failed_track_name: str - Track title
+             * lyrics_failed_track_artist: str - Artist name
+             * lyrics_failed_track_url: str - Spotify URL
+             * lyrics_failed_track_number: int | None - Assigned number
         8. Add all handlers to root logger
     
     File Handling:
@@ -353,6 +361,10 @@ def setup_logging(output_dir: Path) -> None:
     Thread Safety:
         This function is NOT thread-safe. Call it once from the main
         thread before starting any worker threads.
+    
+    See Also:
+        log_download_failure(): Helper to log with correct extra fields
+        log_lyrics_failure(): Helper to log with correct extra fields
     """
     raise NotImplementedError("Contract only - implementation pending")
 

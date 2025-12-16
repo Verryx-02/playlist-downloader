@@ -65,7 +65,8 @@ class EmbedStats:
 def embed_metadata_phase5(
     database: Database,
     playlist_id: str,
-    output_dir: Path
+    output_dir: Path,
+    num_threads: int = 4
 ) -> EmbedStats:
     """
     Embed metadata and lyrics into all M4A files that need processing.
@@ -76,10 +77,12 @@ def embed_metadata_phase5(
         database: Database instance.
         playlist_id: Playlist ID to process.
         output_dir: Directory containing the M4A files.
+        num_threads: Number of parallel embedding threads.
+                    Parallelization helps with cover art downloads.
     
     Returns:
         EmbedStats with embedding results.
-    
+            
     Behavior:
         1. Get tracks needing embedding from database
         2. Create MetadataEmbedder instance
