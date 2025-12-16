@@ -23,6 +23,7 @@ from tqdm import tqdm
 from yt_dlp.utils import sanitize_filename as yt_dlp_sanitize
 
 from spot_downloader.core.logger import get_logger
+from spot_downloader.utils.replace import replace_track_audio
 
 logger = get_logger(__name__)
 
@@ -240,7 +241,7 @@ def run_in_parallel_with_callback(
             database.mark_downloaded(track.id, file_path)
         
         def on_download_error(track, error):
-            log_failed_track(track, str(error))
+            log_download_failure(track, str(error))
         
         success, errors = run_in_parallel_with_callback(
             download_track,

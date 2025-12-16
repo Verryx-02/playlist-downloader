@@ -33,9 +33,17 @@ from tqdm import tqdm
 
 
 # Log file names (created in output directory)
-LOG_FULL_FILENAME = "log_full.txt"
-LOG_ERRORS_FILENAME = "log_errors.txt"
-REPORT_FILENAME = "report.txt"
+LOG_FULL_FILENAME = "log_full.log"
+LOG_ERRORS_FILENAME = "log_errors.log"
+DOWNLOAD_FAILURES_FILENAME = "download_failures.log"
+LYRICS_FAILURES_FILENAME = "lyrics_failures.log"
+
+# Old names:
+# LOG_FULL_FILENAME = "log_full.txt"
+# LOG_ERRORS_FILENAME = "log_errors.txt"
+# REPORT_FILENAME = "report.txt"
+
+
 
 # Log format for file output (detailed with timestamp)
 FILE_LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
@@ -96,39 +104,44 @@ class TqdmLoggingHandler(logging.Handler):
         raise NotImplementedError("Contract only - implementation pending")
 
 
-class FailedTrackHandler(logging.Handler):
+class DownloadFailedTrackHandler(logging.Handler):
     """
-    Custom handler that captures failed track information for the report file.
+    Custom handler that captures download failures for the download report file.
     
-    This handler listens for log records that contain track failure information
-    and writes them to report.txt in a simple, human-readable format:
+    This handler listens for log records that contain track download failure
+    information and writes them to download_failures.log in a simple,
+    human-readable format:
     
-        Song Title - Artist Name
+        42-Song Title-Artist Name.m4a
         https://open.spotify.com/track/xxxxx
         
-        Another Song - Another Artist
+        43-Another Song-Another Artist.m4a
         https://open.spotify.com/track/yyyyy
     
     The handler looks for specific extra fields in log records:
-        - 'failed_track_name': The name of the track that failed
-        - 'failed_track_artist': The artist name
-        - 'failed_track_url': The Spotify URL
+        - 'download_failed_track_name': The name of the track that failed
+        - 'download_failed_track_artist': The artist name
+        - 'download_failed_track_url': The Spotify URL
+        - 'download_failed_track_number': The assigned track number (optional)
     
     Only records containing these fields are written to the report.
     
     Attributes:
-        report_file: Open file handle for report.txt
+        report_path: Path to the download_failures.log file.
+        report_file: Open file handle (opened lazily on first write).
     
     Usage:
         logger.error(
             "Download failed for track",
             extra={
-                'failed_track_name': 'Song Title',
-                'failed_track_artist': 'Artist Name', 
-                'failed_track_url': 'https://open.spotify.com/track/xxx'
+                'download_failed_track_name': 'Song Title',
+                'download_failed_track_artist': 'Artist Name',
+                'download_failed_track_url': 'https://open.spotify.com/track/xxx',
+                'download_failed_track_number': 42
             }
         )
     """
+
     
     def __init__(self, report_path: Path) -> None:
         """
@@ -184,6 +197,97 @@ class FailedTrackHandler(logging.Handler):
         raise NotImplementedError("Contract only - implementation pending")
 
 
+class LyricsFailedTrackHandler(logging.Handler):
+    """
+    Custom handler that captures lyrics fetch failures for the lyrics report file.
+    
+    This handler listens for log records that contain lyrics failure information
+    and writes them to lyrics_failures.log in a simple, human-readable format:
+    
+        42-Song Title-Artist Name.m4a
+        https://open.spotify.com/track/xxxxx
+        
+        43-Another Song-Another Artist.m4a
+        https://open.spotify.com/track/yyyyy
+    
+    The handler looks for specific extra fields in log records:
+        - 'lyrics_failed_track_name': The name of the track
+        - 'lyrics_failed_track_artist': The artist name
+        - 'lyrics_failed_track_url': The Spotify URL
+        - 'lyrics_failed_track_number': The assigned track number (optional)
+    
+    Only records containing these fields are written to the lyrics report.
+    
+    Attributes:
+        report_path: Path to the lyrics_failures.log file.
+        report_file: Open file handle (opened lazily on first write).
+    
+    Usage:
+        logger.warning(
+            "No lyrics found for track",
+            extra={
+                'lyrics_failed_track_name': 'Song Title',
+                'lyrics_failed_track_artist': 'Artist Name',
+                'lyrics_failed_track_url': 'https://open.spotify.com/track/xxx',
+                'lyrics_failed_track_number': 42
+            }
+        )
+    """
+    
+    def __init__(self, report_path: Path) -> None:
+        """
+        Initialize the lyrics failed track handler.
+        
+        Args:
+            report_path: Path to the lyrics_failures.log file.
+                         File will be created/overwritten.
+        
+        Raises:
+            IOError: If the file cannot be opened for writing.
+        """
+        super().__init__()
+        self.report_path = report_path
+        self.report_file: TextIO | None = None
+    
+    def open(self) -> None:
+        """
+        Open the report file for writing.
+        
+        Called by setup_logging() after handler is created.
+        File is opened in write mode (overwrites existing content).
+        """
+        raise NotImplementedError("Contract only - implementation pending")
+    
+    def emit(self, record: logging.LogRecord) -> None:
+        """
+        Write lyrics failed track info to report if present in the log record.
+        
+        Args:
+            record: The log record to check and potentially write.
+        
+        Behavior:
+            1. Check if record has 'lyrics_failed_track_name' attribute
+            2. If not present, ignore the record (return immediately)
+            3. If present, extract track info and write to report file
+            4. Format: "{number}-{track_name}-{artist}.m4a\n{spotify_url}\n\n"
+               If number is None, use "??" as placeholder.
+        
+        Thread Safety:
+            Writes are NOT automatically thread-safe. The file should be
+            protected by a lock if multiple threads may log simultaneously.
+        """
+        raise NotImplementedError("Contract only - implementation pending")
+    
+    def close(self) -> None:
+        """
+        Close the report file handle.
+        
+        Called automatically when logging is shut down.
+        Safe to call multiple times.
+        """
+        raise NotImplementedError("Contract only - implementation pending")
+    
+
 class ErrorOnlyFilter(logging.Filter):
     """
     Filter that only allows ERROR and CRITICAL level records.
@@ -225,17 +329,20 @@ def setup_logging(output_dir: Path) -> None:
            - Level: INFO
            - Format: Compact (no timestamp)
         4. Create and configure full log file handler
-           - Path: output_dir/log_full.txt
+           - Path: output_dir/log_full.log
            - Level: DEBUG
            - Format: Full with timestamp
         5. Create and configure error log file handler
-           - Path: output_dir/log_errors.txt
+           - Path: output_dir/log_errors.log
            - Level: DEBUG (filtered to ERROR+ by ErrorOnlyFilter)
            - Format: Full with timestamp
-        6. Create and configure failed track handler
-           - Path: output_dir/report.txt
-           - Custom format (track name, artist, URL)
-        7. Add all handlers to root logger
+        6. Create and configure download failed track handler
+           - Path: output_dir/download_failures.log
+           - Listens for 'download_failed_track_*' extra fields
+        7. Create and configure lyrics failed track handler
+           - Path: output_dir/lyrics_failures.log
+           - Listens for 'lyrics_failed_track_*' extra fields
+        8. Add all handlers to root logger
     
     File Handling:
         - All log files are opened in write mode (overwrite existing)
@@ -245,13 +352,6 @@ def setup_logging(output_dir: Path) -> None:
     Thread Safety:
         This function is NOT thread-safe. Call it once from the main
         thread before starting any worker threads.
-    
-    Example:
-        from spot_downloader.core.config import load_config
-        from spot_downloader.core.logger import setup_logging
-        
-        config = load_config()
-        setup_logging(config.output.directory)
     """
     raise NotImplementedError("Contract only - implementation pending")
 
@@ -286,7 +386,7 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
-def log_failed_track(
+def log_download_failure(
     logger: logging.Logger,
     track_name: str,
     artist: str,
@@ -295,38 +395,78 @@ def log_failed_track(
     assigned_number: int | None = None
 ) -> None:
     """
-    Log a failed track with proper formatting for the report file.
+    Log a track whose download failed.
     
-    This is a convenience function that logs a track failure with the
-    correct extra fields for the FailedTrackHandler to pick up.
+    This is a convenience function that logs a download failure with the
+    correct extra fields for the DownloadFailedTrackHandler to pick up.
     
     Args:
         logger: The logger to use for the message.
         track_name: The name of the track that failed.
         artist: The artist name.
         spotify_url: The Spotify URL for the track.
-        error_message: Description of why the track failed.
-        assigned_number: Track number that would have been used in filename.
-                        Used to show complete filename in report.
+        error_message: Description of why the download failed.
+        assigned_number: Track number for filename display.
     
     Behavior:
         Logs an ERROR level message with the error_message, and attaches
-        extra fields that FailedTrackHandler will use to write to report.txt.
+        extra fields that DownloadFailedTrackHandler will use to write
+        to download_failures.log.
     
     Example:
-        log_failed_track(
+        log_download_failure(
             logger,
             track_name="Song Title",
             artist="Artist Name",
             spotify_url="https://open.spotify.com/track/xxx",
-            error_message="No matching YouTube video found"
+            error_message="Video unavailable in your country",
+            assigned_number=42
+        )
+    """
+    raise NotImplementedError("Contract only - implementation pending")
+
+
+def log_lyrics_failure(
+    logger: logging.Logger,
+    track_name: str,
+    artist: str,
+    spotify_url: str,
+    assigned_number: int | None = None
+) -> None:
+    """
+    Log a track whose lyrics could not be retrieved.
+    
+    This is a convenience function that logs a lyrics failure with the
+    correct extra fields for the LyricsFailedTrackHandler to pick up.
+    
+    Args:
+        logger: The logger to use for the message.
+        track_name: The name of the track.
+        artist: The artist name.
+        spotify_url: The Spotify URL for the track.
+        assigned_number: Track number for filename display.
+    
+    Behavior:
+        Logs a WARNING level message and attaches extra fields that
+        LyricsFailedTrackHandler will use to write to lyrics_failures.log.
+    
+    Note:
+        This should be called for ALL tracks where lyrics were not found,
+        regardless of the reason (not available, provider error, etc.).
+    
+    Example:
+        log_lyrics_failure(
+            logger,
+            track_name="Instrumental Track",
+            artist="Artist Name",
+            spotify_url="https://open.spotify.com/track/xxx",
+            assigned_number=42
         )
         
         # This will:
-        # 1. Log "No matching YouTube video found" to console and log_full.txt
-        # 2. Log to log_errors.txt (because it's ERROR level)
-        # 3. Write to report.txt:
-        #    "Song Title - Artist Name
+        # 1. Log "No lyrics found for: Instrumental Track" to console/log_full.log
+        # 2. Write to lyrics_failures.log:
+        #    "42-Instrumental Track-Artist Name.m4a
         #     https://open.spotify.com/track/xxx"
     """
     raise NotImplementedError("Contract only - implementation pending")

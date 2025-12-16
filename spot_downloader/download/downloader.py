@@ -53,7 +53,7 @@ from yt_dlp.utils import sanitize_filename
 
 from spot_downloader.core.database import Database
 from spot_downloader.core.exceptions import DownloadError
-from spot_downloader.core.logger import get_logger, log_failed_track
+from spot_downloader.core.logger import get_logger, log_download_failure
 from spot_downloader.download.lyrics import LyricsFetcher, Lyrics
 from spot_downloader.download.metadata import MetadataEmbedder
 from spot_downloader.spotify.models import Track

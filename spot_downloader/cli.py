@@ -5,20 +5,21 @@ This module implements the CLI using Click, providing all commands
 for downloading Spotify playlists via YouTube Music.
 
 Commands:
-    spot --url <playlist_url>      Download a playlist
-    spot --liked                   Download liked songs
-    spot --url <url> --sync        Sync mode (only new tracks)
-    spot --url <url> --dry-run     Dry run (fetch and match, no download)
-    spot --liked --sync            Sync liked songs
-    spot --1 --url <url>           Run only PHASE 1 (fetch metadata)
-    spot --2 --url <url>           Run only PHASE 2 (YouTube match)
-    spot --3 --url <url>           Run only PHASE 3 (download)
+    spot --url <playlist_url>           Download a playlist (all phases)
+    spot --liked                        Download liked songs (all phases)
+    spot --url <url> --sync             Sync mode (only new tracks)
+    spot --1 --url <url>                Run only PHASE 1 (fetch metadata)
+    spot --2                            Run only PHASE 2 (YouTube match)
+    spot --3                            Run only PHASE 3 (download audio)
+    spot --4                            Run only PHASE 4 (fetch lyrics)
+    spot --5                            Run only PHASE 5 (embed metadata)
+    spot --replace <file> <youtube_url> Replace audio in existing file
 
 Options:
     --cookie-file <path>                Path to cookies.txt for YT Premium
 
 Usage:
-    # Download entire playlist
+    # Download entire playlist (all 5 phases)
     spot --url "https://open.spotify.com/playlist/..."
     
     # Sync mode (download only new tracks)
@@ -28,9 +29,14 @@ Usage:
     spot --liked
     
     # Run phases separately
-    spot --1 --url "https://..."   # Fetch Spotify metadata
-    spot --2 --url "https://..."   # Match on YouTube
-    spot --3 --url "https://..."   # Download and process
+    spot --1 --url "https://..."        # Fetch Spotify metadata
+    spot --2                            # Match on YouTube
+    spot --3                            # Download audio
+    spot --4                            # Fetch lyrics
+    spot --5                            # Embed metadata and lyrics
+    
+    # Replace audio in existing file
+    spot --replace ~/Music/01-Song-Artist.m4a "https://youtube.com/watch?v=..."
 
 Configuration:
     The CLI requires a config.yaml file in the current directory with:
@@ -38,6 +44,15 @@ Configuration:
     - Output directory path
     - Number of download threads
     - Optional cookie file path
+
+Phase Dependencies:
+    --1 (fetch metadata): Requires --url or --liked. Creates database entries.
+    --2 (YouTube match): Requires tracks in database without youtube_url.
+    --3 (download audio): Requires tracks with youtube_url but not downloaded.
+    --4 (fetch lyrics): Requires tracks downloaded but lyrics not fetched.
+    --5 (embed metadata): Requires tracks downloaded but metadata not embedded.
+    
+    When running without phase flags, all 5 phases run in sequence.
 """
 
 import sys
@@ -59,7 +74,12 @@ from spot_downloader.core import (
     shutdown_logging,
 )
 from spot_downloader.core.database import LIKED_SONGS_KEY
-from spot_downloader.download import download_tracks_phase3
+from spot_downloader.download import (
+    download_tracks_phase3,
+    fetch_lyrics_phase4,      # Nuovo import
+    embed_metadata_phase5,    # Nuovo import
+)
+from spot_downloader.utils.replace import replace_track_audio  # Nuovo import
 from spot_downloader.spotify import (
     SpotifyClient,
     fetch_liked_songs_phase1,
@@ -80,7 +100,7 @@ __version__ = "0.1.0"
     "--url",
     type=str,
     default=None,
-    help="Spotify playlist URL to download."
+    help="Spotify playlist URL. Required for --1 (fetch metadata phase)."
 )
 @click.option(
     "--liked",
@@ -95,7 +115,7 @@ __version__ = "0.1.0"
 @click.option(
     "--1", "phase1_only",
     is_flag=True,
-    help="Run only PHASE 1: fetch Spotify metadata."
+    help="Run only PHASE 1: fetch Spotify metadata. Requires --url or --liked."
 )
 @click.option(
     "--2", "phase2_only",
@@ -105,18 +125,30 @@ __version__ = "0.1.0"
 @click.option(
     "--3", "phase3_only",
     is_flag=True,
-    help="Run only PHASE 3: download and process audio files."
+    help="Run only PHASE 3: download audio files."
+)
+@click.option(
+    "--4", "phase4_only",
+    is_flag=True,
+    help="Run only PHASE 4: fetch lyrics for downloaded tracks."
+)
+@click.option(
+    "--5", "phase5_only",
+    is_flag=True,
+    help="Run only PHASE 5: embed metadata and lyrics into M4A files."
+)
+@click.option(
+    "--replace",
+    nargs=2,
+    type=(click.Path(exists=True, path_type=Path), str),
+    default=None,
+    help="Replace audio in M4A file. Usage: --replace <file.m4a> <youtube_url>"
 )
 @click.option(
     "--cookie-file",
     type=click.Path(exists=True, path_type=Path),
     default=None,
     help="Path to cookies.txt for YouTube Music Premium quality."
-)
-@click.option(
-    "--dry-run",
-    is_flag=True,
-    help="Simulate download: run PHASE 1 and 2, skip PHASE 3. Shows match report."
 )
 @click.option(
     "--version",
@@ -132,8 +164,10 @@ def cli(
     phase1_only: bool,
     phase2_only: bool,
     phase3_only: bool,
+    phase4_only: bool,
+    phase5_only: bool,
+    replace: Optional[tuple[Path, str]],
     cookie_file: Optional[Path],
-    dry_run: bool,
     version: bool
 ) -> None:
     """
@@ -147,32 +181,59 @@ def cli(
         spot --url "https://open.spotify.com/playlist/..."
         spot --url "https://..." --sync
         spot --liked
+        spot --replace song.m4a "https://youtube.com/watch?v=..."
     """
     # Handle --version
     if version:
         click.echo(f"spot-downloader {__version__}")
         ctx.exit(0)
     
-    # Must have either --url or --liked
+    # Handle --replace (standalone operation)
+    if replace:
+        _handle_replace(replace, cookie_file)
+        ctx.exit(0)
+    
+    # Validate: must have --url or --liked for any operation
     if not url and not liked:
-        raise click.UsageError("Must specify either --url <playlist> or --liked")
+        # No arguments at all - show help
+        click.echo(ctx.get_help())
+        ctx.exit(0)
     
     if url and liked:
         raise click.UsageError("Cannot use both --url and --liked")
     
     # Phase flags are mutually exclusive
-    phase_flags = [phase1_only, phase2_only, phase3_only]
+    phase_flags = [phase1_only, phase2_only, phase3_only, phase4_only, phase5_only]
     if sum(phase_flags) > 1:
-        raise click.UsageError("Only one phase flag (--1, --2, --3) can be used")
+        raise click.UsageError("Only one phase flag (--1, --2, --3, --4, --5) can be used")
     
-    # --dry-run is incompatible with phase flags
-    if dry_run and any(phase_flags):
-        raise click.UsageError("Cannot use --dry-run with phase flags (--1, --2, --3)")
+    # --url can only be used with --1 (or when running all phases)
+    if url and any([phase2_only, phase3_only, phase4_only, phase5_only]):
+        raise click.UsageError("--url can only be used with --1 or when running all phases")
+    
+    # --liked can only be used with --1 (or when running all phases)
+    if liked and any([phase2_only, phase3_only, phase4_only, phase5_only]):
+        raise click.UsageError("--liked can only be used with --1 or when running all phases")
+    
+    # --sync only makes sense with --1 or when running all phases
+    if sync and any([phase2_only, phase3_only, phase4_only, phase5_only]):
+        raise click.UsageError("--sync can only be used with --1 or when running all phases")
     
     # Determine which phases to run
-    run_phase1 = not phase2_only and not phase3_only
-    run_phase2 = not phase1_only and not phase3_only
-    run_phase3 = not phase1_only and not phase2_only and not dry_run
+    if any(phase_flags):
+        # Single phase mode
+        run_phase1 = phase1_only
+        run_phase2 = phase2_only
+        run_phase3 = phase3_only
+        run_phase4 = phase4_only
+        run_phase5 = phase5_only
+    else:
+        # Run all phases
+        run_phase1 = True
+        run_phase2 = True
+        run_phase3 = True
+        run_phase4 = True
+        run_phase5 = True
     
     # Store in context for the command
     ctx.ensure_object(dict)
@@ -182,13 +243,13 @@ def cli(
     ctx.obj["run_phase1"] = run_phase1
     ctx.obj["run_phase2"] = run_phase2
     ctx.obj["run_phase3"] = run_phase3
+    ctx.obj["run_phase4"] = run_phase4
+    ctx.obj["run_phase5"] = run_phase5
     ctx.obj["cookie_file"] = cookie_file
-    ctx.obj["user_auth"] = liked  # True se --liked, False otherwise
-    ctx.obj["dry_run"] = dry_run
+    ctx.obj["user_auth"] = liked  # True if --liked, False otherwise
     
-    # Run the download
+    # Run the download workflow
     _run_download(ctx.obj)
-
 
 def _run_download(options: dict) -> None:
     """
@@ -406,7 +467,7 @@ def _run_phase3(
     num_threads: int
 ) -> None:
     """
-    Run PHASE 3: Download and process audio files.
+    Run PHASE 3: Download audio files only.
     
     Args:
         database: Database instance.
@@ -417,9 +478,126 @@ def _run_phase3(
     
     Behavior:
         1. Log phase start
-        2. Get tracks needing download from database
-        3. Run downloader with threading
+        2. Get tracks with youtube_url but not downloaded
+        3. For each track:
+           a. Download audio from YouTube using yt-dlp
+           b. Convert to M4A format
+           c. Save with temporary filename (will be renamed in phase 5)
+           d. Update database: downloaded=True, file_path, download_timestamp
         4. Log download statistics
+        5. Write failures to download_failures.log
+    
+    Important:
+        This phase does NOT fetch lyrics or embed metadata.
+        Those operations are now handled by PHASE 4 and PHASE 5.
+        The file is saved with a temporary name like "temp_{track_id}.m4a"
+        and will be renamed to the final format in PHASE 5.
+    
+    Database Updates:
+        - Sets downloaded=True
+        - Sets file_path to temporary file location
+        - Sets download_timestamp
+    """
+    raise NotImplementedError("Contract only - implementation pending")
+
+def _run_phase4(
+    database: Database,
+    playlist_id: str,
+    num_threads: int
+) -> None:
+    """
+    Run PHASE 4: Fetch lyrics for downloaded tracks.
+    
+    Args:
+        database: Database instance.
+        playlist_id: Playlist ID for database queries.
+        num_threads: Number of parallel fetching threads.
+    
+    Behavior:
+        1. Log phase start
+        2. Get tracks that are downloaded but don't have lyrics_fetched=True
+        3. For each track:
+           a. Attempt to fetch lyrics from multiple providers
+           b. If found: store lyrics in database (lyrics_text, lyrics_synced, lyrics_source)
+           c. If not found: log to lyrics_failures.log
+           d. Mark lyrics_fetched=True regardless of success
+        4. Log lyrics fetch statistics
+    
+    Database Updates:
+        - Sets lyrics_text, lyrics_synced, lyrics_source for successful fetches
+        - Sets lyrics_fetched=True for all processed tracks
+    
+    Logging:
+        - INFO: Phase start, progress, completion
+        - DEBUG: Individual track processing
+        - Writes to lyrics_failures.log for tracks without lyrics
+    """
+    raise NotImplementedError("Contract only - implementation pending")
+
+
+def _run_phase5(
+    database: Database,
+    playlist_id: str,
+    output_dir: Path
+) -> None:
+    """
+    Run PHASE 5: Embed metadata and lyrics into M4A files.
+    
+    Args:
+        database: Database instance.
+        playlist_id: Playlist ID for database queries.
+        output_dir: Directory containing the M4A files.
+    
+    Behavior:
+        1. Log phase start
+        2. Get tracks that are downloaded but don't have metadata_embedded=True
+        3. For each track:
+           a. Load file from file_path in database
+           b. Embed all Spotify metadata (title, artist, album, cover, etc.)
+           c. If lyrics_text exists in database, embed lyrics
+           d. Rename file to final format: {number}-{title}-{artist}.m4a
+           e. Update file_path in database
+           f. Mark metadata_embedded=True and lyrics_embedded=True (if lyrics present)
+        4. Log embedding statistics
+    
+    Database Updates:
+        - Updates file_path to reflect any rename
+        - Sets metadata_embedded=True
+        - Sets lyrics_embedded=True if lyrics were embedded
+    
+    Logging:
+        - INFO: Phase start, progress, completion
+        - DEBUG: Individual track processing
+        - ERROR: Files that couldn't be processed
+    """
+    raise NotImplementedError("Contract only - implementation pending")
+
+
+def _handle_replace(replace_args: tuple[Path, str], cookie_file: Path | None) -> None:
+    """
+    Handle the --replace standalone operation.
+    
+    This function replaces the audio in an existing M4A file with audio
+    downloaded from a YouTube URL, while preserving all metadata.
+    
+    Args:
+        replace_args: Tuple of (m4a_file_path, youtube_url).
+        cookie_file: Optional path to cookies.txt for Premium quality.
+    
+    Behavior:
+        1. Load configuration (for cookie_file fallback)
+        2. Validate the M4A file exists and is readable
+        3. Extract existing metadata from the M4A file
+        4. Download audio from YouTube URL
+        5. Re-embed the preserved metadata into the new audio
+        6. Replace the original file
+    
+    Raises:
+        SystemExit: On any error (file not found, download failed, etc.)
+    
+    Note:
+        This operation is completely independent from the database.
+        It works on any M4A file produced by this application.
     """
     raise NotImplementedError("Contract only - implementation pending")
 

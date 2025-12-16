@@ -6,6 +6,8 @@ enabling features like:
     - Resume interrupted downloads
     - Sync mode (download only new tracks)
     - Track download status and metadata
+    - Track lyrics fetch status
+    - Track metadata embedding status
 
 Database Structure:
     The database is a JSON file with the following structure:
@@ -28,6 +30,12 @@ Database Structure:
                         "downloaded": true,
                         "download_timestamp": "2024-01-15T10:35:00Z",
                         "file_path": "/path/to/file.m4a",
+                        "lyrics_fetched": true,
+                        "lyrics_text": "[00:15.00]First line...",
+                        "lyrics_synced": true,
+                        "lyrics_source": "synced",
+                        "metadata_embedded": true,
+                        "lyrics_embedded": true,
                         "metadata": { ... full spotify metadata ... }
                     }
                 }
@@ -39,6 +47,14 @@ Database Structure:
         }
     }
 
+New Fields:
+    lyrics_fetched: bool - True if we attempted to fetch lyrics (success or not)
+    lyrics_text: str|null - The lyrics text, or null if not found
+    lyrics_synced: bool - True if lyrics are in LRC format with timestamps
+    lyrics_source: str|null - Provider name ("synced", "genius", etc.) or null
+    metadata_embedded: bool - True if metadata has been written to the M4A file
+    lyrics_embedded: bool - True if lyrics have been written to the M4A file
+
 Thread Safety:
     All public methods acquire a threading.Lock before reading or writing.
     This ensures safe concurrent access from multiple download threads.
@@ -46,6 +62,7 @@ Thread Safety:
 File Safety:
     Writes use atomic rename pattern: write to temp file, then rename.
     This prevents corruption if the program crashes during write.
+
 
 Usage:
     from spot_downloader.core.database import Database
@@ -259,10 +276,10 @@ class Database:
     # =========================================================================
     
     def add_track(
-        self,
-        playlist_id: str,
-        track_id: str,
-        track_data: dict[str, Any]
+    self,
+    playlist_id: str,
+    track_id: str,
+    track_data: dict[str, Any]
     ) -> None:
         """
         Add a track to a playlist in the database.
@@ -281,12 +298,19 @@ class Database:
                 - cover_url: Album cover URL
                 - release_date: Release date string
                 - track_number: Position in album
+                - assigned_number: Track number for file naming
+                - added_at: When track was added to playlist
                 - metadata: Full Spotify API response (for later use)
         
         Behavior:
-            - If track already exists, update metadata but preserve
-              youtube_url, downloaded status, and file_path
-            - If track is new, add with youtube_url=None, downloaded=False
+            - If track already exists, update metadata but preserve:
+            youtube_url, downloaded, file_path, download_timestamp,
+            lyrics_fetched, lyrics_text, lyrics_synced, lyrics_source,
+            metadata_embedded, lyrics_embedded
+            - If track is new, add with:
+            youtube_url=None, downloaded=False, file_path=None,
+            lyrics_fetched=False, lyrics_text=None, lyrics_synced=False,
+            lyrics_source=None, metadata_embedded=False, lyrics_embedded=False
             - Save to disk
         
         Raises:
@@ -296,7 +320,7 @@ class Database:
             Acquires _lock for the entire operation.
         """
         raise NotImplementedError("Contract only - implementation pending")
-    
+        
     def add_tracks_batch(
         self,
         playlist_id: str,
@@ -504,6 +528,206 @@ class Database:
         """
         raise NotImplementedError("Contract only - implementation pending")
     
+        
+    # =========================================================================
+    # Lyrics
+    # =========================================================================
+    
+    def set_lyrics(
+    self,
+    playlist_id: str,
+    track_id: str,
+    lyrics_text: str,
+    is_synced: bool,
+    source: str
+    ) -> None:
+        """
+        Store fetched lyrics for a track.
+        
+        Args:
+            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
+            track_id: The Spotify track ID.
+            lyrics_text: The lyrics text (plain text or LRC format).
+            is_synced: True if lyrics are in LRC format with timestamps.
+            source: Name of the provider that returned lyrics
+                    (e.g., "synced", "genius", "azlyrics", "musixmatch").
+        
+        Behavior:
+            - Set lyrics_text to the provided text
+            - Set lyrics_synced to is_synced
+            - Set lyrics_source to source
+            - Set lyrics_fetched to True
+            - Save to disk
+        
+        Raises:
+            DatabaseError: If playlist or track doesn't exist.
+        
+        Thread Safety:
+            Acquires _lock for the entire operation.
+        
+        Example:
+            db.set_lyrics(
+                playlist_id,
+                track_id,
+                lyrics_text="[00:15.00]First line...",
+                is_synced=True,
+                source="synced"
+            )
+        """
+        raise NotImplementedError("Contract only - implementation pending")
+
+
+    def mark_lyrics_fetched(
+        self,
+        playlist_id: str,
+        track_id: str
+    ) -> None:
+        """
+        Mark a track as having had lyrics fetch attempted.
+        
+        This should be called even when no lyrics were found, to avoid
+        re-attempting the fetch on subsequent runs.
+        
+        Args:
+            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
+            track_id: The Spotify track ID.
+        
+        Behavior:
+            - Set lyrics_fetched to True
+            - Does NOT modify lyrics_text, lyrics_synced, or lyrics_source
+            - Save to disk
+        
+        Raises:
+            DatabaseError: If playlist or track doesn't exist.
+        
+        Thread Safety:
+            Acquires _lock for the entire operation.
+        
+        Use Case:
+            Call this after attempting to fetch lyrics, regardless of whether
+            lyrics were found. This prevents the system from repeatedly trying
+            to fetch lyrics for tracks that don't have any available.
+        """
+        raise NotImplementedError("Contract only - implementation pending")
+
+
+    def get_tracks_needing_lyrics(
+        self,
+        playlist_id: str
+    ) -> list[dict[str, Any]]:
+        """
+        Get all tracks that need lyrics fetching.
+        
+        Args:
+            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
+        
+        Returns:
+            List of track data dictionaries where:
+            - downloaded is True
+            - lyrics_fetched is False
+            Each dict includes 'track_id' key for reference.
+        
+        Use Case:
+            Used in PHASE 4 to determine which tracks need lyrics fetching.
+        
+        Thread Safety:
+            Acquires _lock and returns copies of track data.
+        """
+        raise NotImplementedError("Contract only - implementation pending")
+    
+            
+    # =========================================================================
+    # Metadata embedding
+    # =========================================================================
+    
+    def mark_metadata_embedded(
+        self,
+        playlist_id: str,
+        track_id: str,
+        new_file_path: Path | None = None
+    ) -> None:
+        """
+        Mark a track as having metadata successfully embedded.
+        
+        Args:
+            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
+            track_id: The Spotify track ID.
+            new_file_path: Optional new file path if file was renamed.
+                        If provided, updates file_path field.
+        
+        Behavior:
+            - Set metadata_embedded to True
+            - If new_file_path provided, update file_path
+            - Save to disk
+        
+        Raises:
+            DatabaseError: If playlist or track doesn't exist.
+        
+        Thread Safety:
+            Acquires _lock for the entire operation.
+        
+        Use Case:
+            Called after successfully embedding all metadata into an M4A file.
+            If the file was renamed to its final name during embedding,
+            pass the new path to update the database.
+        """
+        raise NotImplementedError("Contract only - implementation pending")
+
+
+    def mark_lyrics_embedded(
+        self,
+        playlist_id: str,
+        track_id: str
+    ) -> None:
+        """
+        Mark a track as having lyrics successfully embedded.
+        
+        Args:
+            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
+            track_id: The Spotify track ID.
+        
+        Behavior:
+            - Set lyrics_embedded to True
+            - Save to disk
+        
+        Raises:
+            DatabaseError: If playlist or track doesn't exist.
+        
+        Thread Safety:
+            Acquires _lock for the entire operation.
+        
+        Note:
+            This should only be called if the track actually has lyrics.
+            Tracks without lyrics should have lyrics_embedded remain False.
+        """
+        raise NotImplementedError("Contract only - implementation pending")
+
+
+    def get_tracks_needing_embedding(
+        self,
+        playlist_id: str
+    ) -> list[dict[str, Any]]:
+        """
+        Get all tracks that need metadata embedding.
+        
+        Args:
+            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
+        
+        Returns:
+            List of track data dictionaries where:
+            - downloaded is True
+            - metadata_embedded is False
+            Each dict includes 'track_id' key for reference.
+        
+        Use Case:
+            Used in PHASE 5 to determine which tracks need metadata embedding.
+        
+        Thread Safety:
+            Acquires _lock and returns copies of track data.
+        """
+        raise NotImplementedError("Contract only - implementation pending")
+
+
     # =========================================================================
     # Statistics
     # =========================================================================
@@ -562,3 +786,5 @@ class Database:
             in the playlist and returns max + 1.
         """
         raise NotImplementedError("Contract only - implementation pending")
+    
+    
