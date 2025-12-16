@@ -24,7 +24,7 @@ Architecture:
     PHASE 3 (download/): Download audio files
         - Download audio from YouTube using yt-dlp
         - Convert to M4A format
-        - Store with temporary filename
+        - Save with final filename: {number}-{title}-{artist}.m4a
         - Mark as downloaded in database
     
     PHASE 4 (download/): Fetch lyrics
@@ -35,8 +35,7 @@ Architecture:
     PHASE 5 (download/): Embed metadata and lyrics
         - Read metadata and lyrics from database
         - Embed into M4A files using mutagen
-        - Rename files to final format
-        - Update database with final paths
+        - Mark as embedded in database
 
 Modules:
     core/       - Configuration, database, logging, exceptions

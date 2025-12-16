@@ -88,23 +88,25 @@ class DownloadStats:
 
 class Downloader:
     """
-    Downloads audio from YouTube and processes into final M4A files.
+    Downloads audio from YouTube and converts to M4A files.
     
     This class implements PHASE 3 of the download workflow. It takes
-    tracks with YouTube URLs and produces final M4A files with
-    embedded metadata.
+    tracks with YouTube URLs and produces M4A audio files saved with
+    their final filenames.
     
     Attributes:
         _database: Database for tracking download state.
         _output_dir: Directory where files are saved.
         _cookie_file: Optional cookies.txt for YouTube Premium.
         _num_threads: Number of parallel downloads.
-        _lyrics_fetcher: LyricsFetcher instance.
-        _metadata_embedder: MetadataEmbedder instance.
     
     Thread Safety:
         The download_track() method is thread-safe. Multiple threads
         can download different tracks simultaneously.
+    
+    Note:
+        This class does NOT handle lyrics fetching or metadata embedding.
+        Those operations are handled by PHASE 4 and PHASE 5 respectively.
     
     Example:
         downloader = Downloader(
@@ -139,8 +141,7 @@ class Downloader:
         Behavior:
             1. Store configuration
             2. Create output_dir if it doesn't exist
-            3. Initialize LyricsFetcher and MetadataEmbedder
-            4. Validate cookie_file exists (if provided)
+            3. Validate cookie_file exists (if provided)
         """
         raise NotImplementedError("Contract only - implementation pending")
     
@@ -192,14 +193,14 @@ class Downloader:
         playlist_id: str
     ) -> bool:
         """
-        Download and process a single track.
+        Download a single track from YouTube and save as M4A.
         
-        This method handles the complete download workflow for one track.
+        This method handles the PHASE 3 download workflow for one track.
         
         Args:
             track_data: Track data dictionary from database.
                        Required keys: track_id, youtube_url, name,
-                       artist, artists, album, duration_ms, etc.
+                       artist, assigned_number, etc.
             playlist_id: Playlist ID for database updates.
         
         Returns:
@@ -209,17 +210,15 @@ class Downloader:
             1. Reconstruct Track object from track_data
             2. Download audio from YouTube URL
             3. Convert to M4A using FFmpeg
-            4. Fetch lyrics (optional, may fail silently)
-            5. Embed metadata and lyrics
-            6. Generate filename and rename
-            7. Update database (mark downloaded)
-            8. Return success
+            4. Generate final filename: {assigned_number}-{title}-{artist}.m4a
+            5. Save file to output_dir
+            6. Update database (downloaded=True, file_path, download_timestamp)
+            7. Return success
         
         Error Handling:
             - Download errors: Logged, returns False
             - Conversion errors: Logged, returns False
-            - Metadata errors: Logged, returns False
-            - Lyrics errors: Logged, continues (lyrics optional)
+            - File save errors: Logged, returns False
         
         Logging:
             - INFO: Starting download
@@ -229,6 +228,10 @@ class Downloader:
         
         Thread Safety:
             This method is thread-safe. Uses per-track temp files.
+        
+        Note:
+            This method does NOT fetch lyrics or embed metadata.
+            Those operations are handled by PHASE 4 and PHASE 5.
         """
         raise NotImplementedError("Contract only - implementation pending")
     

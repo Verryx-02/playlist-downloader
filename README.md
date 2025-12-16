@@ -113,7 +113,7 @@ spot --3
 # PHASE 4: Fetch lyrics
 spot --4
 
-# PHASE 5: Embedd metadata and lyrics
+# PHASE 5: Embed metadata and lyrics
 spot --5
 
 ```
@@ -153,7 +153,7 @@ Downloaded files follow this format:
 {track_number}-{title}-{artist}.m4a
 ```
 
-Track numbers are assigned sequentially based on download order.
+Track numbers are assigned based on when tracks were added to the playlist (oldest first).
 
 ### Log Files
 
@@ -177,25 +177,41 @@ A `database.json` file tracks the state of all playlists and tracks, enabling:
 ## Project Structure
 
 ```
-spot_downloader/
-├── core/
-│   ├── config.py       # Configuration loading
-│   ├── database.py     # Thread-safe JSON database
-│   ├── exceptions.py   # Custom exceptions
-│   └── logger.py       # Multi-file logging
-├── spotify/
-│   ├── client.py       # Spotify API singleton
-│   ├── fetcher.py      # PHASE 1 implementation
-│   └── models.py       # Track, Playlist dataclasses
-├── youtube/
-│   ├── matcher.py      # PHASE 2 implementation
-│   └── models.py       # MatchResult dataclasses
-├── download/
-│   ├── downloader.py   # PHASE 3 implementation
-│   ├── lyrics.py       # Multi-provider lyrics fetching
-│   └── metadata.py     # M4A metadata embedding
-├── utils/              # Utilities (sanitization, threading)
-└── cli.py              # Click CLI interface
+.
+├── config.yaml.example       # Example configuration file
+├── LICENSE
+├── pyproject.toml            # Project dependencies and metadata
+├── README.md
+└── spot_downloader/
+    ├── __init__.py           # Package init, architecture documentation
+    ├── cli.py                # Click CLI interface
+    ├── core/
+    │   ├── __init__.py       # Core module exports
+    │   ├── config.py         # Configuration loading and validation
+    │   ├── database.py       # Thread-safe JSON database
+    │   ├── exceptions.py     # Custom exception classes
+    │   └── logger.py         # Multi-file logging setup
+    ├── spotify/
+    │   ├── __init__.py       # Spotify module exports
+    │   ├── client.py         # Spotify API singleton client
+    │   ├── fetcher.py        # PHASE 1: Fetch metadata from Spotify
+    │   └── models.py         # Track, Playlist, LikedSongs dataclasses
+    ├── youtube/
+    │   ├── __init__.py       # YouTube module exports
+    │   ├── matcher.py        # PHASE 2: Match tracks on YouTube Music
+    │   └── models.py         # MatchResult dataclass
+    ├── download/
+    │   ├── __init__.py       # Download module exports
+    │   ├── downloader.py     # PHASE 3: Download audio from YouTube
+    │   ├── lyrics.py         # Lyrics fetcher and data model
+    │   ├── lyrics_phase.py   # PHASE 4: Fetch lyrics orchestration
+    │   ├── metadata.py       # M4A metadata embedder
+    │   └── embed_phase.py    # PHASE 5: Embed metadata orchestration
+    └── utils/
+        ├── __init__.py       # Utility functions (URL parsing, formatting)
+        └── replace.py        # Replace audio in existing M4A files
+
+7 directories, 26 files
 ```
 
 ## Metadata Tags

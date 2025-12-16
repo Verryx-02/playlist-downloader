@@ -76,10 +76,10 @@ from spot_downloader.core import (
 from spot_downloader.core.database import LIKED_SONGS_KEY
 from spot_downloader.download import (
     download_tracks_phase3,
-    fetch_lyrics_phase4,      # Nuovo import
-    embed_metadata_phase5,    # Nuovo import
+    fetch_lyrics_phase4,
+    embed_metadata_phase5,
 )
-from spot_downloader.utils.replace import replace_track_audio  # Nuovo import
+from spot_downloader.utils.replace import replace_track_audio
 from spot_downloader.spotify import (
     SpotifyClient,
     fetch_liked_songs_phase1,
@@ -583,13 +583,14 @@ def _run_phase5(
            a. Load file from file_path in database
            b. Embed all Spotify metadata (title, artist, album, cover, etc.)
            c. If lyrics_text exists in database, embed lyrics
-           d. Rename file to final format: {number}-{title}-{artist}.m4a
-           e. Update file_path in database
-           f. Mark metadata_embedded=True and lyrics_embedded=True (if lyrics present)
+           d. Mark metadata_embedded=True and lyrics_embedded=True (if lyrics present)
         4. Log embedding statistics
     
+    File Naming:
+        Files already have their final names from PHASE 3.
+        This phase does NOT rename files, only embeds metadata.
+    
     Database Updates:
-        - Updates file_path to reflect any rename
         - Sets metadata_embedded=True
         - Sets lyrics_embedded=True if lyrics were embedded
     

@@ -10,9 +10,12 @@ PHASE 5 Workflow:
        a. Load the M4A file from file_path
        b. Embed all Spotify metadata
        c. Embed lyrics (if available in database)
-       d. Rename to final filename: {number}-{title}-{artist}.m4a
-       e. Update database with new file_path and embedded flags
+       d. Update database with embedded flags
     3. Report statistics
+
+Note:
+    Files already have their final names from PHASE 3.
+    This phase does NOT rename files, only embeds metadata.
 
 Usage:
     from spot_downloader.download.embed_phase import embed_metadata_phase5
