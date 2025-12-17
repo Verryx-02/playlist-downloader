@@ -221,6 +221,56 @@ class Track:
         """
         raise NotImplementedError("Contract only - implementation pending")
     
+    @classmethod
+    def from_database_dict(cls, track_id: str, data: dict[str, Any]) -> "Track":
+        """
+        Reconstruct a Track instance from database dictionary.
+        
+        This is the inverse of to_database_dict(), used when running
+        phases 2-5 separately from phase 1.
+        
+        Args:
+            track_id: The Spotify track ID (stored as dict key in database).
+            data: The track data dictionary from the database.
+                This is the dict returned by database.get_track() or
+                items in database.get_tracks_without_youtube_url().
+        
+        Returns:
+            Track: A new Track instance with all fields populated.
+        
+        Behavior:
+            1. Extract all fields from the data dictionary
+            2. Convert list fields back to tuples (artists, genres)
+            3. Handle optional fields with appropriate defaults
+            4. Return frozen Track instance
+        
+        Field Mapping:
+            Database lists → Track tuples:
+            - data["artists"] (list) → self.artists (tuple)
+            - data["genres"] (list) → self.genres (tuple)
+            
+            Required fields (must exist in data):
+            - name, artist, album, duration_ms, spotify_url
+            
+            Optional fields (use defaults if missing):
+            - All other fields per Track dataclass defaults
+        
+        Example:
+            # When running phase 2 separately
+            track_dicts = database.get_tracks_without_youtube_url(playlist_id)
+            tracks = [
+                Track.from_database_dict(d["track_id"], d)
+                for d in track_dicts
+            ]
+            
+            # Now tracks is list[Track] ready for match_tracks_phase2()
+        
+        Note:
+            The database stores lists for JSON compatibility, but Track
+            uses tuples for immutability. This method handles the conversion.
+        """
+        raise NotImplementedError("Contract only - implementation pending")
+
     @property
     def search_query(self) -> str:
         """

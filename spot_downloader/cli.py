@@ -73,6 +73,7 @@ from spot_downloader.core import (
     setup_logging,
     shutdown_logging,
 )
+from spot_downloader.spotify import Track
 from spot_downloader.core.database import LIKED_SONGS_KEY
 from spot_downloader.download import (
     download_tracks_phase3,
@@ -443,7 +444,7 @@ def _run_phase1(
     url: str | None,
     liked: bool,
     sync: bool
-) -> list:
+) -> list[Track]:
     """
     Run PHASE 1: Fetch Spotify metadata.
     
@@ -468,7 +469,7 @@ def _run_phase1(
 def _run_phase2(
     database: Database,
     playlist_id: str,
-    tracks: list | None,
+    tracks: list[Track] | None,
     num_threads: int
 ) -> None:
     """
