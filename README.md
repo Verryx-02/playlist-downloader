@@ -244,6 +244,7 @@ The following metadata is embedded in each M4A file:
 | mutagen | M4A metadata |
 | rapidfuzz | Fuzzy string matching |
 | click | CLI framework |
+| rich-click | CLI colors |
 | tqdm | Progress bars |
 | pyyaml | Config parsing |
 | syncedlyrics | Timestamped lyrics |

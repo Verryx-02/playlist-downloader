@@ -3,6 +3,7 @@ Command-line interface for spot-downloader.
 
 This module implements the CLI using Click, providing all commands
 for downloading Spotify playlists via YouTube Music.
+rich-click is used for the output colors.
 
 Commands:
     spot --url <playlist_url>           Download a playlist (all phases)
@@ -59,7 +60,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-import click
+import rich_click as click
 
 from spot_downloader.core import (
     Config,

@@ -95,6 +95,7 @@ Dependencies:
     - mutagen: Audio metadata manipulation
     - rapidfuzz: Fuzzy string matching
     - click: CLI framework
+    - rich-click: CLI colors
     - tqdm: Progress bars
     - pyyaml: Configuration file parsing
 """
