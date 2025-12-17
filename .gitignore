@@ -38,6 +38,7 @@ venv.bak/
 .playlist-downloader/
 playlist-dl.log*
 tokens.json
+config.yaml
 
 # Downloaded content
 downloads/
