@@ -11,7 +11,7 @@ and Liked Songs. It is responsible for:
 PHASE 1 Workflow:
     1. Parse input (playlist URL or --liked flag)
     2. Fetch playlist/liked songs metadata from Spotify
-    3. For each track, fetch additional artist/album data if needed
+    3. Batch fetch additional artist/album data for all tracks
     4. Convert to Track objects
     5. Store in database
     6. Return tracks for PHASE 2
@@ -20,6 +20,17 @@ Sync Mode:
     When --sync is used, this module compares fetched tracks against
     the database and returns only tracks that are new (not already
     in the database).
+
+Batch Optimization:
+    Instead of making N+2 API calls per track (1 artist + 1 album),
+    this module collects unique artist and album IDs and fetches them
+    in batches:
+    - Artists: up to 50 per request
+    - Albums: up to 20 per request
+    
+    For 100 tracks with 50 unique artists and 40 unique albums:
+    - Old approach: 200+ API calls
+    - Batch approach: ~4 API calls
 
 Usage:
     from spot_downloader.spotify.fetcher import SpotifyFetcher
@@ -33,14 +44,17 @@ Usage:
     liked, new_tracks = fetcher.fetch_liked_songs(sync_mode=True)
 """
 
+from dataclasses import replace
 from typing import Any
 
-from spot_downloader.core.database import Database
+from spot_downloader.core.database import Database, LIKED_SONGS_KEY
+from spot_downloader.core.exceptions import SpotifyError
 from spot_downloader.core.logger import get_logger
 from spot_downloader.spotify.client import SpotifyClient
 from spot_downloader.spotify.models import LikedSongs, Playlist, Track
 
 logger = get_logger(__name__)
+
 
 def _assign_track_numbers(
     tracks: list[Track],
@@ -66,8 +80,6 @@ def _assign_track_numbers(
     Note:
         Tracks without added_at are sorted to the end.
     """
-    from dataclasses import replace
-    
     # Sort by added_at (oldest first, None values at end)
     sorted_tracks = sorted(
         tracks,
@@ -81,6 +93,7 @@ def _assign_track_numbers(
         result.append(new_track)
     
     return result
+
 
 class SpotifyFetcher:
     """
@@ -126,7 +139,14 @@ class SpotifyFetcher:
             SpotifyClient.init() must be called before creating a
             SpotifyFetcher instance.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        if not SpotifyClient.is_initialized():
+            raise SpotifyError(
+                "SpotifyClient not initialized. Call SpotifyClient.init() first.",
+                is_auth_error=True
+            )
+        
+        self._client = SpotifyClient()
+        self._database = database
     
     def fetch_playlist(
         self,
@@ -153,44 +173,128 @@ class SpotifyFetcher:
         Raises:
             SpotifyError: If playlist not found, private without access,
                          or network error.
-        
-        Behavior:
-            1. Fetch playlist metadata (name, description, owner)
-            2. Fetch all tracks using pagination
-            3. For each track:
-               a. Skip if track is None (removed from Spotify)
-               b. Skip if track is local file (not on Spotify)
-               c. Fetch additional artist data (for genres)
-               d. Fetch additional album data (for detailed metadata)
-               e. Create Track object
-            4. Assign track numbers using _assign_track_numbers():
-               - Sort tracks by added_at (oldest first)
-               - In sync_mode: get existing max from database, start from max+1
-               - In full fetch: start from 1
-            5. Create/update playlist entry in database
-            6. Add all tracks to database
-            7. If sync_mode, filter to only new tracks
-            8. Return Playlist and track list
-        
-        Database Changes:
-            - Creates playlist entry if not exists
-            - Updates playlist last_synced timestamp
-            - Adds all tracks (preserves existing youtube_url and downloaded status)
-        
-        Logging:
-            - INFO: Playlist name and total track count
-            - INFO: Number of new tracks (in sync mode)
-            - WARNING: Skipped tracks (local files, unavailable)
-            - DEBUG: Individual track processing
-        
-        Example:
-            playlist, tracks = fetcher.fetch_playlist(
-                "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M",
-                sync_mode=True
-            )
-            logger.info(f"Processing {len(tracks)} new tracks from {playlist.name}")
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        logger.info(f"Fetching playlist: {playlist_url}")
+        
+        # 1. Fetch playlist metadata
+        playlist_data = self._client.playlist(playlist_url)
+        playlist_id = playlist_data["id"]
+        playlist_name = playlist_data.get("name", "Unknown Playlist")
+        
+        logger.info(f"Playlist: {playlist_name}")
+        
+        # 2. Fetch all track items
+        track_items = self._client.playlist_all_items(playlist_url)
+        logger.info(f"Found {len(track_items)} track items")
+        
+        # 3. Filter valid tracks and collect IDs for batch fetching
+        valid_items: list[dict[str, Any]] = []
+        artist_ids: set[str] = set()
+        album_ids: set[str] = set()
+        skipped_count = 0
+        
+        for item in track_items:
+            if not self._is_valid_track(item):
+                skipped_count += 1
+                continue
+            
+            track_data = item["track"]
+            valid_items.append(item)
+            
+            # Collect primary artist ID (for genres)
+            if track_data.get("artists"):
+                artist_id = track_data["artists"][0].get("id")
+                if artist_id:
+                    artist_ids.add(artist_id)
+            
+            # Collect album ID (for publisher/copyright)
+            album_id = track_data.get("album", {}).get("id")
+            if album_id:
+                album_ids.add(album_id)
+        
+        if skipped_count > 0:
+            logger.warning(f"Skipped {skipped_count} invalid tracks (local files, unavailable, etc.)")
+        
+        logger.debug(f"Unique artists to fetch: {len(artist_ids)}")
+        logger.debug(f"Unique albums to fetch: {len(album_ids)}")
+        
+        # 4. Batch fetch artists for genres
+        artist_map: dict[str, dict[str, Any]] = {}
+        if artist_ids:
+            logger.debug("Batch fetching artist data for genres...")
+            artist_list = list(artist_ids)
+            artists_data = self._client.artists(artist_list)
+            for artist_data in artists_data:
+                if artist_data:
+                    artist_map[artist_data["id"]] = artist_data
+        
+        # 5. Batch fetch albums for publisher/copyright
+        album_map: dict[str, dict[str, Any]] = {}
+        if album_ids:
+            logger.debug("Batch fetching album data for metadata...")
+            album_list = list(album_ids)
+            albums_data = self._client.albums(album_list)
+            for album_data in albums_data:
+                if album_data:
+                    album_map[album_data["id"]] = album_data
+        
+        # 6. Create Track objects with full metadata
+        tracks: list[Track] = []
+        for item in valid_items:
+            track_data = item["track"]
+            added_at = item.get("added_at")
+            
+            # Get artist data for this track
+            artist_data = None
+            if track_data.get("artists"):
+                primary_artist_id = track_data["artists"][0].get("id")
+                if primary_artist_id:
+                    artist_data = artist_map.get(primary_artist_id)
+            
+            # Get album data for this track
+            album_data = None
+            album_id = track_data.get("album", {}).get("id")
+            if album_id:
+                album_data = album_map.get(album_id)
+            
+            track = Track.from_spotify_api(
+                track_data=track_data,
+                artist_data=artist_data,
+                album_data=album_data,
+                added_at=added_at
+            )
+            tracks.append(track)
+            logger.debug(f"Processed: {track.artist} - {track.name}")
+        
+        logger.info(f"Successfully parsed {len(tracks)} tracks")
+        
+        # 7. Assign track numbers
+        if sync_mode:
+            existing_max = self._database.get_max_assigned_number(playlist_id)
+        else:
+            existing_max = 0
+        
+        tracks = _assign_track_numbers(tracks, existing_max)
+        
+        # 8. Create/update playlist in database
+        self._database.add_playlist(
+            playlist_id=playlist_id,
+            spotify_url=playlist_data.get("external_urls", {}).get("spotify", playlist_url),
+            name=playlist_name
+        )
+        
+        # 9. Store tracks in database
+        self._store_tracks_in_database(tracks, playlist_id)
+        
+        # 10. Filter for sync mode if needed
+        if sync_mode:
+            tracks = self._filter_new_tracks(tracks, playlist_id)
+            logger.info(f"Sync mode: {len(tracks)} new tracks to process")
+        
+        # 11. Create Playlist object
+        playlist = Playlist.from_spotify_api(playlist_data, tracks)
+        
+        return playlist, tracks
     
     def fetch_liked_songs(
         self,
@@ -213,62 +317,118 @@ class SpotifyFetcher:
         Raises:
             SpotifyError: If user auth not enabled.
             SpotifyError: If authentication failed or network error.
-        
-        Behavior:
-            1. Check that user authentication is enabled
-            2. Fetch all saved tracks using pagination
-            3. For each saved track:
-               a. Extract track data from saved track object
-               b. Fetch additional artist/album data
-               c. Create Track object
-            4. Assign track numbers based on added_at (oldest first)
-            5. Ensure liked_songs section exists in database
-            6. Add all tracks to database
-            7. If sync_mode, filter to only new tracks
-            8. Return LikedSongs and track list
-        
-        Database Changes:
-            - Creates liked_songs section if not exists
-            - Updates liked_songs last_synced timestamp
-            - Adds all tracks (preserves existing youtube_url and downloaded status)
-        
-        Note:
-            Liked Songs requires user authentication. When --liked flag
-            is used, user_auth is automatically enabled by the CLI.
         """
-        raise NotImplementedError("Contract only - implementation pending")
-    
-    def _fetch_track_full_metadata(
-        self,
-        track_data: dict[str, Any]
-    ) -> Track | None:
-        """
-        Fetch complete metadata for a single track.
+        logger.info("Fetching Liked Songs...")
         
-        This method fetches additional artist and album data to get
-        complete metadata (genres, publisher, copyright, etc.)
+        # Check user auth
+        if not self._client.has_user_auth:
+            raise SpotifyError(
+                "User authentication required to access Liked Songs. "
+                "Initialize SpotifyClient with user_auth=True.",
+                is_auth_error=True
+            )
         
-        Args:
-            track_data: Track object from Spotify API
-                       (from playlist_items or saved_tracks response).
+        # 1. Fetch all saved tracks
+        saved_items = self._client.current_user_all_saved_tracks()
+        total_count = len(saved_items)
+        logger.info(f"Found {total_count} liked songs")
         
-        Returns:
-            Track object with full metadata, or None if track is invalid
-            (local file, unavailable, etc.)
+        # 2. Filter valid tracks and collect IDs for batch fetching
+        valid_items: list[dict[str, Any]] = []
+        artist_ids: set[str] = set()
+        album_ids: set[str] = set()
+        skipped_count = 0
         
-        Behavior:
-            1. Validate track data (not None, not local, has required fields)
-            2. Extract primary artist ID
-            3. Fetch artist data for genres
-            4. Extract album ID
-            5. Fetch album data for publisher/copyright
-            6. Create and return Track object
+        for item in saved_items:
+            if not self._is_valid_track(item):
+                skipped_count += 1
+                continue
+            
+            track_data = item["track"]
+            valid_items.append(item)
+            
+            # Collect primary artist ID
+            if track_data.get("artists"):
+                artist_id = track_data["artists"][0].get("id")
+                if artist_id:
+                    artist_ids.add(artist_id)
+            
+            # Collect album ID
+            album_id = track_data.get("album", {}).get("id")
+            if album_id:
+                album_ids.add(album_id)
         
-        Logging:
-            - DEBUG: Track being processed
-            - WARNING: Invalid or skipped tracks (with reason)
-        """
-        raise NotImplementedError("Contract only - implementation pending")
+        if skipped_count > 0:
+            logger.warning(f"Skipped {skipped_count} invalid tracks")
+        
+        # 3. Batch fetch artists
+        artist_map: dict[str, dict[str, Any]] = {}
+        if artist_ids:
+            logger.debug("Batch fetching artist data...")
+            artists_data = self._client.artists(list(artist_ids))
+            for artist_data in artists_data:
+                if artist_data:
+                    artist_map[artist_data["id"]] = artist_data
+        
+        # 4. Batch fetch albums
+        album_map: dict[str, dict[str, Any]] = {}
+        if album_ids:
+            logger.debug("Batch fetching album data...")
+            albums_data = self._client.albums(list(album_ids))
+            for album_data in albums_data:
+                if album_data:
+                    album_map[album_data["id"]] = album_data
+        
+        # 5. Create Track objects
+        tracks: list[Track] = []
+        for item in valid_items:
+            track_data = item["track"]
+            added_at = item.get("added_at")
+            
+            artist_data = None
+            if track_data.get("artists"):
+                primary_artist_id = track_data["artists"][0].get("id")
+                if primary_artist_id:
+                    artist_data = artist_map.get(primary_artist_id)
+            
+            album_data = None
+            album_id = track_data.get("album", {}).get("id")
+            if album_id:
+                album_data = album_map.get(album_id)
+            
+            track = Track.from_spotify_api(
+                track_data=track_data,
+                artist_data=artist_data,
+                album_data=album_data,
+                added_at=added_at
+            )
+            tracks.append(track)
+        
+        logger.info(f"Successfully parsed {len(tracks)} tracks")
+        
+        # 6. Assign track numbers
+        if sync_mode:
+            existing_max = self._database.get_max_assigned_number(LIKED_SONGS_KEY)
+        else:
+            existing_max = 0
+        
+        tracks = _assign_track_numbers(tracks, existing_max)
+        
+        # 7. Ensure liked_songs section exists in database
+        self._database.ensure_liked_songs_exists()
+        
+        # 8. Store tracks in database
+        self._store_tracks_in_database(tracks, LIKED_SONGS_KEY)
+        
+        # 9. Filter for sync mode
+        if sync_mode:
+            tracks = self._filter_new_tracks(tracks, LIKED_SONGS_KEY)
+            logger.info(f"Sync mode: {len(tracks)} new tracks to process")
+        
+        # 10. Create LikedSongs object
+        liked_songs = LikedSongs.from_spotify_api(tracks, total_count)
+        
+        return liked_songs, tracks
     
     def _filter_new_tracks(
         self,
@@ -296,7 +456,13 @@ class SpotifyFetcher:
             Uses set lookup for O(1) membership testing.
             Efficient even for large playlists.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        if playlist_id == LIKED_SONGS_KEY:
+            existing_ids = self._database.get_liked_songs_track_ids()
+        else:
+            existing_ids = self._database.get_playlist_track_ids(playlist_id)
+        
+        new_tracks = [t for t in tracks if t.spotify_id not in existing_ids]
+        return new_tracks
     
     def _store_tracks_in_database(
         self,
@@ -315,7 +481,15 @@ class SpotifyFetcher:
             - Uses batch add for efficiency
             - Preserves existing youtube_url and downloaded status
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        if not tracks:
+            return
+        
+        batch_data: list[tuple[str, dict[str, Any]]] = []
+        for track in tracks:
+            batch_data.append((track.spotify_id, track.to_database_dict()))
+        
+        self._database.add_tracks_batch(playlist_id, batch_data)
+        logger.debug(f"Stored {len(tracks)} tracks in database")
     
     @staticmethod
     def _is_valid_track(track_item: dict[str, Any] | None) -> bool:
@@ -335,8 +509,42 @@ class SpotifyFetcher:
             - Missing track object (track['track'] = None)
             - Podcast episodes (track['track']['type'] != 'track')
             - Tracks with no duration (duration_ms = 0)
+            - Tracks with empty name
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        # None item
+        if track_item is None:
+            return False
+        
+        # Check if it's a dict
+        if not isinstance(track_item, dict):
+            return False
+        
+        # Check for track object
+        track = track_item.get("track")
+        if track is None:
+            return False
+        
+        # Local file check
+        if track.get("is_local", False):
+            return False
+        
+        # Type check (must be 'track', not 'episode')
+        if track.get("type") != "track":
+            return False
+        
+        # Must have ID
+        if not track.get("id"):
+            return False
+        
+        # Must have duration
+        if track.get("duration_ms", 0) == 0:
+            return False
+        
+        # Must have name (not empty)
+        if not track.get("name", "").strip():
+            return False
+        
+        return True
 
 
 def fetch_playlist_phase1(

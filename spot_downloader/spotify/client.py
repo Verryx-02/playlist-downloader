@@ -71,7 +71,13 @@ class SpotifyClientMeta(type):
             SpotifyError: If init() has not been called yet.
                          Error message instructs user to call init() first.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        if cls._instance is None:
+            raise SpotifyError(
+                "SpotifyClient not initialized. Call SpotifyClient.init("
+                "client_id, client_secret) first.",
+                is_auth_error=True
+            )
+        return cls._instance
     
     def init(
         cls,
@@ -133,7 +139,60 @@ class SpotifyClientMeta(type):
                 user_auth=True
             )
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        if cls._initialized:
+            raise SpotifyError(
+                "SpotifyClient.init() has already been called. "
+                "Use SpotifyClient() to get the existing instance.",
+                is_auth_error=True
+            )
+        
+        try:
+            if user_auth:
+                # OAuth flow for user data access (Liked Songs, private playlists)
+                auth_manager = SpotifyOAuth(
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    redirect_uri="http://localhost:8888/callback",
+                    scope="user-library-read playlist-read-private",
+                    open_browser=True
+                )
+            else:
+                # Client credentials flow for public data only
+                auth_manager = SpotifyClientCredentials(
+                    client_id=client_id,
+                    client_secret=client_secret
+                )
+            
+            # Create spotipy instance
+            spotify_instance = spotipy.Spotify(auth_manager=auth_manager)
+            
+            # Test connection by making a simple API call
+            # For client credentials, we can't call current_user(), so we test differently
+            if user_auth:
+                spotify_instance.current_user()
+            else:
+                # Test with a simple search to verify credentials work
+                spotify_instance.search(q="test", type="track", limit=1)
+            
+            # Create and store singleton instance
+            instance = super().__call__(spotify_instance, user_auth)
+            cls._instance = instance
+            cls._initialized = True
+            
+            return instance
+            
+        except spotipy.SpotifyException as e:
+            raise SpotifyError(
+                f"Spotify authentication failed: {e}",
+                details={"original_error": str(e)},
+                is_auth_error=True
+            ) from e
+        except Exception as e:
+            raise SpotifyError(
+                f"Failed to initialize Spotify client: {e}",
+                details={"original_error": str(e)},
+                is_auth_error=True
+            ) from e
     
     def is_initialized(cls) -> bool:
         """
@@ -253,7 +312,25 @@ class SpotifyClient(metaclass=SpotifyClientMeta):
             track_data = client.track("4cOdK2wGLETKBW3PvgPWqT")
             print(track_data['name'])  # "Song Title"
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        try:
+            result = self._spotify.track(track_id_or_url)
+            if result is None:
+                raise SpotifyError(
+                    f"Track not found: {track_id_or_url}",
+                    details={"track_id": track_id_or_url}
+                )
+            return result
+        except spotipy.SpotifyException as e:
+            if e.http_status == 429:
+                raise SpotifyError(
+                    f"Rate limited while fetching track: {track_id_or_url}",
+                    details={"track_id": track_id_or_url, "http_status": 429},
+                    is_rate_limit=True
+                ) from e
+            raise SpotifyError(
+                f"Failed to fetch track: {e}",
+                details={"track_id": track_id_or_url, "original_error": str(e)}
+            ) from e
     
     def tracks(self, track_ids: list[str]) -> list[dict[str, Any]]:
         """
@@ -276,7 +353,35 @@ class SpotifyClient(metaclass=SpotifyClientMeta):
             Use this instead of multiple track() calls when fetching
             many tracks. Spotify allows up to 50 tracks per request.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        if not track_ids:
+            return []
+        
+        results: list[dict[str, Any]] = []
+        
+        try:
+            # Process in batches of 50 (Spotify API limit)
+            for i in range(0, len(track_ids), 50):
+                batch = track_ids[i:i + 50]
+                response = self._spotify.tracks(batch)
+                if response and "tracks" in response:
+                    results.extend(response["tracks"])
+                else:
+                    # Add None placeholders for failed batch
+                    results.extend([None] * len(batch))
+            
+            return results
+            
+        except spotipy.SpotifyException as e:
+            if e.http_status == 429:
+                raise SpotifyError(
+                    "Rate limited while fetching tracks batch",
+                    details={"batch_size": len(track_ids), "http_status": 429},
+                    is_rate_limit=True
+                ) from e
+            raise SpotifyError(
+                f"Failed to fetch tracks batch: {e}",
+                details={"batch_size": len(track_ids), "original_error": str(e)}
+            ) from e
     
     # =========================================================================
     # Artist Operations
@@ -299,7 +404,75 @@ class SpotifyClient(metaclass=SpotifyClientMeta):
             Primary use is to fetch genre information, which Spotify
             only provides at the artist level, not track level.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        try:
+            result = self._spotify.artist(artist_id_or_url)
+            if result is None:
+                raise SpotifyError(
+                    f"Artist not found: {artist_id_or_url}",
+                    details={"artist_id": artist_id_or_url}
+                )
+            return result
+        except spotipy.SpotifyException as e:
+            if e.http_status == 429:
+                raise SpotifyError(
+                    f"Rate limited while fetching artist: {artist_id_or_url}",
+                    details={"artist_id": artist_id_or_url, "http_status": 429},
+                    is_rate_limit=True
+                ) from e
+            raise SpotifyError(
+                f"Failed to fetch artist: {e}",
+                details={"artist_id": artist_id_or_url, "original_error": str(e)}
+            ) from e
+    
+    def artists(self, artist_ids: list[str]) -> list[dict[str, Any]]:
+        """
+        Get metadata for multiple artists in a single request.
+        
+        Args:
+            artist_ids: List of Spotify artist IDs (max 50 per request).
+                       If more than 50, multiple requests are made.
+        
+        Returns:
+            List of artist metadata dictionaries.
+            Order matches input order.
+            None entries for artists that couldn't be fetched.
+        
+        Raises:
+            SpotifyError: If rate limited (after retries exhausted).
+            SpotifyError: If network error occurs.
+        
+        Performance:
+            Use this instead of multiple artist() calls when fetching
+            genres for many tracks. Spotify allows up to 50 artists per request.
+        """
+        if not artist_ids:
+            return []
+        
+        results: list[dict[str, Any]] = []
+        
+        try:
+            # Process in batches of 50 (Spotify API limit)
+            for i in range(0, len(artist_ids), 50):
+                batch = artist_ids[i:i + 50]
+                response = self._spotify.artists(batch)
+                if response and "artists" in response:
+                    results.extend(response["artists"])
+                else:
+                    results.extend([None] * len(batch))
+            
+            return results
+            
+        except spotipy.SpotifyException as e:
+            if e.http_status == 429:
+                raise SpotifyError(
+                    "Rate limited while fetching artists batch",
+                    details={"batch_size": len(artist_ids), "http_status": 429},
+                    is_rate_limit=True
+                ) from e
+            raise SpotifyError(
+                f"Failed to fetch artists batch: {e}",
+                details={"batch_size": len(artist_ids), "original_error": str(e)}
+            ) from e
     
     # =========================================================================
     # Album Operations
@@ -322,7 +495,76 @@ class SpotifyClient(metaclass=SpotifyClientMeta):
         Raises:
             SpotifyError: If album not found or network error.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        try:
+            result = self._spotify.album(album_id_or_url)
+            if result is None:
+                raise SpotifyError(
+                    f"Album not found: {album_id_or_url}",
+                    details={"album_id": album_id_or_url}
+                )
+            return result
+        except spotipy.SpotifyException as e:
+            if e.http_status == 429:
+                raise SpotifyError(
+                    f"Rate limited while fetching album: {album_id_or_url}",
+                    details={"album_id": album_id_or_url, "http_status": 429},
+                    is_rate_limit=True
+                ) from e
+            raise SpotifyError(
+                f"Failed to fetch album: {e}",
+                details={"album_id": album_id_or_url, "original_error": str(e)}
+            ) from e
+    
+    def albums(self, album_ids: list[str]) -> list[dict[str, Any]]:
+        """
+        Get metadata for multiple albums in a single request.
+        
+        Args:
+            album_ids: List of Spotify album IDs (max 20 per request).
+                      If more than 20, multiple requests are made.
+        
+        Returns:
+            List of album metadata dictionaries.
+            Order matches input order.
+            None entries for albums that couldn't be fetched.
+        
+        Raises:
+            SpotifyError: If rate limited (after retries exhausted).
+            SpotifyError: If network error occurs.
+        
+        Performance:
+            Use this instead of multiple album() calls when fetching
+            publisher/copyright for many tracks. Spotify allows up to
+            20 albums per request.
+        """
+        if not album_ids:
+            return []
+        
+        results: list[dict[str, Any]] = []
+        
+        try:
+            # Process in batches of 20 (Spotify API limit for albums)
+            for i in range(0, len(album_ids), 20):
+                batch = album_ids[i:i + 20]
+                response = self._spotify.albums(batch)
+                if response and "albums" in response:
+                    results.extend(response["albums"])
+                else:
+                    results.extend([None] * len(batch))
+            
+            return results
+            
+        except spotipy.SpotifyException as e:
+            if e.http_status == 429:
+                raise SpotifyError(
+                    "Rate limited while fetching albums batch",
+                    details={"batch_size": len(album_ids), "http_status": 429},
+                    is_rate_limit=True
+                ) from e
+            raise SpotifyError(
+                f"Failed to fetch albums batch: {e}",
+                details={"batch_size": len(album_ids), "original_error": str(e)}
+            ) from e
     
     # =========================================================================
     # Playlist Operations
@@ -347,7 +589,33 @@ class SpotifyClient(metaclass=SpotifyClientMeta):
             For private playlists, user_auth must be enabled and the
             authenticated user must have access to the playlist.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        try:
+            result = self._spotify.playlist(
+                playlist_id_or_url,
+                fields="id,name,description,owner,images,external_urls,tracks.total,uri"
+            )
+            if result is None:
+                raise SpotifyError(
+                    f"Playlist not found: {playlist_id_or_url}",
+                    details={"playlist_url": playlist_id_or_url}
+                )
+            return result
+        except spotipy.SpotifyException as e:
+            if e.http_status == 429:
+                raise SpotifyError(
+                    f"Rate limited while fetching playlist: {playlist_id_or_url}",
+                    details={"playlist_url": playlist_id_or_url, "http_status": 429},
+                    is_rate_limit=True
+                ) from e
+            if e.http_status == 404:
+                raise SpotifyError(
+                    f"Playlist not found: {playlist_id_or_url}",
+                    details={"playlist_url": playlist_id_or_url, "http_status": 404}
+                ) from e
+            raise SpotifyError(
+                f"Failed to fetch playlist: {e}",
+                details={"playlist_url": playlist_id_or_url, "original_error": str(e)}
+            ) from e
     
     def playlist_items(
         self,
@@ -389,7 +657,30 @@ class SpotifyClient(metaclass=SpotifyClientMeta):
                     break
                 offset += 100
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        try:
+            result = self._spotify.playlist_items(
+                playlist_id_or_url,
+                limit=min(limit, 100),
+                offset=offset,
+                additional_types=["track"]
+            )
+            if result is None:
+                raise SpotifyError(
+                    f"Failed to fetch playlist items: {playlist_id_or_url}",
+                    details={"playlist_url": playlist_id_or_url}
+                )
+            return result
+        except spotipy.SpotifyException as e:
+            if e.http_status == 429:
+                raise SpotifyError(
+                    f"Rate limited while fetching playlist items: {playlist_id_or_url}",
+                    details={"playlist_url": playlist_id_or_url, "http_status": 429},
+                    is_rate_limit=True
+                ) from e
+            raise SpotifyError(
+                f"Failed to fetch playlist items: {e}",
+                details={"playlist_url": playlist_id_or_url, "original_error": str(e)}
+            ) from e
     
     def playlist_all_items(self, playlist_id_or_url: str) -> list[dict[str, Any]]:
         """
@@ -416,7 +707,19 @@ class SpotifyClient(metaclass=SpotifyClientMeta):
             For very large playlists (1000+ tracks), this may take
             several seconds and make 10+ API requests.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        all_items: list[dict[str, Any]] = []
+        offset = 0
+        
+        while True:
+            response = self.playlist_items(playlist_id_or_url, limit=100, offset=offset)
+            items = response.get("items", [])
+            all_items.extend(items)
+            
+            if response.get("next") is None:
+                break
+            offset += 100
+        
+        return all_items
     
     # =========================================================================
     # User Library Operations (requires user_auth)
@@ -449,7 +752,41 @@ class SpotifyClient(metaclass=SpotifyClientMeta):
             This method requires user authentication (user_auth=True
             in init()). Will raise SpotifyError if not enabled.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        if not self._user_auth:
+            raise SpotifyError(
+                "User authentication required to access Liked Songs. "
+                "Initialize SpotifyClient with user_auth=True.",
+                is_auth_error=True
+            )
+        
+        try:
+            result = self._spotify.current_user_saved_tracks(
+                limit=min(limit, 50),
+                offset=offset
+            )
+            if result is None:
+                raise SpotifyError(
+                    "Failed to fetch saved tracks",
+                    details={"offset": offset, "limit": limit}
+                )
+            return result
+        except spotipy.SpotifyException as e:
+            if e.http_status == 429:
+                raise SpotifyError(
+                    "Rate limited while fetching saved tracks",
+                    details={"http_status": 429},
+                    is_rate_limit=True
+                ) from e
+            if e.http_status == 401:
+                raise SpotifyError(
+                    "Authentication expired or invalid for accessing Liked Songs",
+                    details={"http_status": 401},
+                    is_auth_error=True
+                ) from e
+            raise SpotifyError(
+                f"Failed to fetch saved tracks: {e}",
+                details={"original_error": str(e)}
+            ) from e
     
     def current_user_all_saved_tracks(self) -> list[dict[str, Any]]:
         """
@@ -470,4 +807,23 @@ class SpotifyClient(metaclass=SpotifyClientMeta):
             This is the method for fetching Liked Songs in PHASE 1
             when --liked flag is used.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        if not self._user_auth:
+            raise SpotifyError(
+                "User authentication required to access Liked Songs. "
+                "Initialize SpotifyClient with user_auth=True.",
+                is_auth_error=True
+            )
+        
+        all_items: list[dict[str, Any]] = []
+        offset = 0
+        
+        while True:
+            response = self.current_user_saved_tracks(limit=50, offset=offset)
+            items = response.get("items", [])
+            all_items.extend(items)
+            
+            if response.get("next") is None:
+                break
+            offset += 50
+        
+        return all_items

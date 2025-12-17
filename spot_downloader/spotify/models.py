@@ -157,7 +157,8 @@ class Track:
         cls,
         track_data: dict[str, Any],
         artist_data: dict[str, Any] | None = None,
-        album_data: dict[str, Any] | None = None
+        album_data: dict[str, Any] | None = None,
+        added_at: str | None = None
     ) -> "Track":
         """
         Create a Track instance from Spotify API response data.
@@ -167,13 +168,16 @@ class Track:
         
         Args:
             track_data: The track object from Spotify API.
-                        This is the response from spotify.track(track_id).
+                        This is the response from spotify.track(track_id) or
+                        the 'track' field from playlist_items response.
             artist_data: Optional artist object for genre information.
                          Response from spotify.artist(artist_id).
                          If None, genres will be empty.
             album_data: Optional album object for additional metadata.
                         Response from spotify.album(album_id).
                         If None, uses album data embedded in track_data.
+            added_at: Optional ISO timestamp of when track was added to playlist.
+                     Passed from the playlist_items wrapper.
         
         Returns:
             Track: A new Track instance populated with the extracted data.
@@ -200,7 +204,130 @@ class Track:
             This method mirrors the approach used in spotDL's Song.from_url()
             method for consistency in metadata extraction.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        # Extract basic track info
+        spotify_id = track_data["id"]
+        spotify_url = track_data["external_urls"]["spotify"]
+        name = track_data["name"]
+        duration_ms = track_data["duration_ms"]
+        explicit = track_data.get("explicit", False)
+        popularity = track_data.get("popularity", 0)
+        
+        # Extract artists
+        artists_list = [a["name"] for a in track_data.get("artists", [])]
+        artist = artists_list[0] if artists_list else "Unknown Artist"
+        artists = tuple(artists_list)
+        
+        # Extract ISRC
+        isrc = track_data.get("external_ids", {}).get("isrc")
+        
+        # Extract album info from track_data (basic)
+        album_info = track_data.get("album", {})
+        album_name = album_info.get("name", "Unknown Album")
+        track_number = track_data.get("track_number", 1)
+        disc_number = track_data.get("disc_number", 1)
+        
+        # Get album artist from album info
+        album_artists = album_info.get("artists", [])
+        album_artist = album_artists[0]["name"] if album_artists else artist
+        
+        # Get release date from album
+        release_date = album_info.get("release_date", "")
+        
+        # Parse year from release_date
+        year = 0
+        if release_date:
+            try:
+                year = int(release_date[:4])
+            except (ValueError, IndexError):
+                year = 0
+        
+        # Get cover URL - find highest resolution image
+        cover_url = None
+        images = album_info.get("images", [])
+        if images:
+            # Sort by size (width * height) descending, take first
+            try:
+                best_image = max(
+                    images,
+                    key=lambda img: (img.get("width") or 0) * (img.get("height") or 0)
+                )
+                cover_url = best_image.get("url")
+            except (ValueError, TypeError):
+                # Fallback to first image if sorting fails
+                cover_url = images[0].get("url") if images else None
+        
+        # Default values that may be overridden by album_data
+        publisher = ""
+        copyright_text = ""
+        disc_count = 1
+        tracks_count = album_info.get("total_tracks", 1)
+        genres: tuple[str, ...] = ()
+        
+        # If we have full album data, extract additional metadata
+        if album_data:
+            publisher = album_data.get("label", "")
+            
+            # Get copyright
+            copyrights = album_data.get("copyrights", [])
+            if copyrights:
+                copyright_text = copyrights[0].get("text", "")
+            
+            # Get disc count from last track in album
+            album_tracks = album_data.get("tracks", {}).get("items", [])
+            if album_tracks:
+                disc_count = album_tracks[-1].get("disc_number", 1)
+            
+            tracks_count = album_data.get("total_tracks", tracks_count)
+            
+            # Get better release date from album if available
+            if album_data.get("release_date"):
+                release_date = album_data["release_date"]
+                try:
+                    year = int(release_date[:4])
+                except (ValueError, IndexError):
+                    pass
+            
+            # Get better cover from album_data if available
+            album_images = album_data.get("images", [])
+            if album_images:
+                try:
+                    best_image = max(
+                        album_images,
+                        key=lambda img: (img.get("width") or 0) * (img.get("height") or 0)
+                    )
+                    cover_url = best_image.get("url")
+                except (ValueError, TypeError):
+                    pass
+        
+        # If we have artist data, extract genres
+        if artist_data:
+            genres = tuple(artist_data.get("genres", []))
+        
+        return cls(
+            spotify_id=spotify_id,
+            spotify_url=spotify_url,
+            name=name,
+            artist=artist,
+            artists=artists,
+            album=album_name,
+            duration_ms=duration_ms,
+            album_artist=album_artist,
+            track_number=track_number,
+            disc_number=disc_number,
+            disc_count=disc_count,
+            tracks_count=tracks_count,
+            release_date=release_date,
+            year=year,
+            isrc=isrc,
+            explicit=explicit,
+            popularity=popularity,
+            cover_url=cover_url,
+            genres=genres,
+            publisher=publisher,
+            copyright_text=copyright_text,
+            assigned_number=None,  # Assigned later by _assign_track_numbers
+            added_at=added_at
+        )
     
     def to_database_dict(self) -> dict[str, Any]:
         """
@@ -219,7 +346,30 @@ class Track:
             track = Track(...)
             db.add_track(playlist_id, track.spotify_id, track.to_database_dict())
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        return {
+            "name": self.name,
+            "artist": self.artist,
+            "artists": list(self.artists),
+            "album": self.album,
+            "album_artist": self.album_artist,
+            "duration_ms": self.duration_ms,
+            "track_number": self.track_number,
+            "disc_number": self.disc_number,
+            "disc_count": self.disc_count,
+            "tracks_count": self.tracks_count,
+            "release_date": self.release_date,
+            "year": self.year,
+            "isrc": self.isrc,
+            "explicit": self.explicit,
+            "popularity": self.popularity,
+            "cover_url": self.cover_url,
+            "genres": list(self.genres),
+            "publisher": self.publisher,
+            "copyright_text": self.copyright_text,
+            "spotify_url": self.spotify_url,
+            "assigned_number": self.assigned_number,
+            "added_at": self.added_at,
+        }
     
     @classmethod
     def from_database_dict(cls, track_id: str, data: dict[str, Any]) -> "Track":
@@ -269,7 +419,35 @@ class Track:
             The database stores lists for JSON compatibility, but Track
             uses tuples for immutability. This method handles the conversion.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        # Convert lists to tuples
+        artists = tuple(data.get("artists", [data.get("artist", "Unknown Artist")]))
+        genres = tuple(data.get("genres", []))
+        
+        return cls(
+            spotify_id=track_id,
+            spotify_url=data.get("spotify_url", f"https://open.spotify.com/track/{track_id}"),
+            name=data.get("name", "Unknown"),
+            artist=data.get("artist", "Unknown Artist"),
+            artists=artists,
+            album=data.get("album", "Unknown Album"),
+            duration_ms=data.get("duration_ms", 0),
+            album_artist=data.get("album_artist", ""),
+            track_number=data.get("track_number", 1),
+            disc_number=data.get("disc_number", 1),
+            disc_count=data.get("disc_count", 1),
+            tracks_count=data.get("tracks_count", 1),
+            release_date=data.get("release_date", ""),
+            year=data.get("year", 0),
+            isrc=data.get("isrc"),
+            explicit=data.get("explicit", False),
+            popularity=data.get("popularity", 0),
+            cover_url=data.get("cover_url"),
+            genres=genres,
+            publisher=data.get("publisher", ""),
+            copyright_text=data.get("copyright_text", ""),
+            assigned_number=data.get("assigned_number"),
+            added_at=data.get("added_at"),
+        )
 
     @property
     def search_query(self) -> str:
@@ -381,7 +559,49 @@ class Playlist:
             tracks = [Track.from_spotify_api(t) for t in ...]
             playlist = Playlist.from_spotify_api(playlist_response, tracks)
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        # Extract playlist ID
+        spotify_id = playlist_data.get("id", "")
+        
+        # Extract URL
+        spotify_url = playlist_data.get("external_urls", {}).get(
+            "spotify", 
+            f"https://open.spotify.com/playlist/{spotify_id}"
+        )
+        
+        # Extract basic info
+        name = playlist_data.get("name", "Unknown Playlist")
+        description = playlist_data.get("description", "")
+        
+        # Extract owner info
+        owner = playlist_data.get("owner", {})
+        owner_name = owner.get("display_name", owner.get("id", "Unknown"))
+        
+        # Find highest-resolution cover image
+        cover_url = None
+        images = playlist_data.get("images", [])
+        if images:
+            try:
+                best_image = max(
+                    images,
+                    key=lambda img: (img.get("width") or 0) * (img.get("height") or 0)
+                )
+                cover_url = best_image.get("url")
+            except (ValueError, TypeError):
+                cover_url = images[0].get("url") if images else None
+        
+        # Get total tracks from API response
+        total_tracks = playlist_data.get("tracks", {}).get("total", len(tracks))
+        
+        return cls(
+            spotify_id=spotify_id,
+            spotify_url=spotify_url,
+            name=name,
+            description=description,
+            owner_name=owner_name,
+            cover_url=cover_url,
+            tracks=tuple(tracks),
+            total_tracks=total_tracks
+        )
     
     @property
     def track_count(self) -> int:
@@ -427,7 +647,10 @@ class LikedSongs:
         Returns:
             LikedSongs: A new LikedSongs instance.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        return cls(
+            tracks=tuple(tracks),
+            total_tracks=total
+        )
     
     @property
     def track_count(self) -> int:
