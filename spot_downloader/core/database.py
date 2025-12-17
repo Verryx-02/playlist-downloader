@@ -97,6 +97,7 @@ LIKED_SONGS_KEY = "__liked_songs__"
 # Special value for youtube_url when match failed (distinguishes from None = not yet matched)
 YOUTUBE_MATCH_FAILED = "MATCH_FAILED"
 
+
 class Database:
     """
     Thread-safe JSON database for persistent storage.
@@ -149,7 +150,29 @@ class Database:
             3. If file doesn't exist, create empty database structure
             4. Validate schema version matches DATABASE_VERSION
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        self.db_path = db_path
+        self._lock = threading.Lock()
+        
+        # Check parent directory exists
+        if not db_path.parent.exists():
+            raise DatabaseError(
+                f"Parent directory does not exist: {db_path.parent}",
+                details={"path": str(db_path.parent)}
+            )
+        
+        # Load existing or create new
+        if db_path.exists():
+            self._data = self._load()
+            # Validate version
+            if self._data.get("version") != DATABASE_VERSION:
+                stored_version = self._data.get("version", "unknown")
+                raise DatabaseError(
+                    f"Database version mismatch: expected {DATABASE_VERSION}, got {stored_version}",
+                    details={"expected": DATABASE_VERSION, "actual": stored_version}
+                )
+        else:
+            self._data = self._create_empty_database()
+            self._save()
     
     def _load(self) -> dict[str, Any]:
         """
@@ -164,7 +187,19 @@ class Database:
         Note:
             This is an internal method. Callers must hold _lock.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        try:
+            with open(self.db_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            raise DatabaseError(
+                f"Database file contains invalid JSON: {e}",
+                details={"path": str(self.db_path), "original_error": str(e)}
+            ) from e
+        except IOError as e:
+            raise DatabaseError(
+                f"Failed to read database file: {e}",
+                details={"path": str(self.db_path), "original_error": str(e)}
+            ) from e
     
     def _save(self) -> None:
         """
@@ -182,7 +217,26 @@ class Database:
         Note:
             This is an internal method. Callers must hold _lock.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        temp_path = self.db_path.with_suffix(".tmp")
+        
+        try:
+            # Write to temp file
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(self._data, f, indent=2, ensure_ascii=False)
+            
+            # Atomic rename
+            temp_path.replace(self.db_path)
+        except IOError as e:
+            # Clean up temp file if it exists
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except Exception:
+                    pass
+            raise DatabaseError(
+                f"Failed to save database: {e}",
+                details={"path": str(self.db_path), "original_error": str(e)}
+            ) from e
     
     def _create_empty_database(self) -> dict[str, Any]:
         """
@@ -191,7 +245,32 @@ class Database:
         Returns:
             Dictionary with empty playlists and liked_songs sections.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        return {
+            "version": DATABASE_VERSION,
+            "playlists": {},
+            "liked_songs": None  # Will be created on first use
+        }
+    
+    def _get_tracks_container(self, playlist_id: str) -> dict[str, Any] | None:
+        """
+        Get the container (playlist or liked_songs) for a given ID.
+        
+        Internal helper to abstract playlist vs liked_songs handling.
+        
+        Args:
+            playlist_id: The playlist ID or LIKED_SONGS_KEY.
+        
+        Returns:
+            The container dict with 'tracks' key, or None if not found.
+        """
+        if playlist_id == LIKED_SONGS_KEY:
+            return self._data.get("liked_songs")
+        else:
+            return self._data.get("playlists", {}).get(playlist_id)
+    
+    def _now_iso(self) -> str:
+        """Get current UTC time as ISO format string."""
+        return datetime.now(timezone.utc).isoformat()
     
     # =========================================================================
     # Playlist Operations
@@ -210,7 +289,8 @@ class Database:
         Thread Safety:
             Acquires _lock for the duration of the check.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        with self._lock:
+            return playlist_id in self._data.get("playlists", {})
     
     def add_playlist(
         self,
@@ -235,7 +315,24 @@ class Database:
         Thread Safety:
             Acquires _lock for the entire operation.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        with self._lock:
+            playlists = self._data.setdefault("playlists", {})
+            
+            if playlist_id in playlists:
+                # Update existing
+                playlists[playlist_id]["spotify_url"] = spotify_url
+                playlists[playlist_id]["name"] = name
+                playlists[playlist_id]["last_synced"] = self._now_iso()
+            else:
+                # Create new
+                playlists[playlist_id] = {
+                    "spotify_url": spotify_url,
+                    "name": name,
+                    "last_synced": self._now_iso(),
+                    "tracks": {}
+                }
+            
+            self._save()
     
     def get_playlist_track_ids(self, playlist_id: str) -> set[str]:
         """
@@ -255,7 +352,11 @@ class Database:
         Thread Safety:
             Acquires _lock for the duration of the read.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        with self._lock:
+            container = self._get_tracks_container(playlist_id)
+            if container is None:
+                return set()
+            return set(container.get("tracks", {}).keys())
     
     def get_playlist_info(self, playlist_id: str) -> dict[str, Any] | None:
         """
@@ -271,7 +372,15 @@ class Database:
         Thread Safety:
             Acquires _lock and returns a copy of the data.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        with self._lock:
+            playlist = self._data.get("playlists", {}).get(playlist_id)
+            if playlist is None:
+                return None
+            return {
+                "spotify_url": playlist.get("spotify_url"),
+                "name": playlist.get("name"),
+                "last_synced": playlist.get("last_synced")
+            }
     
     def get_active_playlist_id(self) -> str | None:
         """
@@ -303,17 +412,36 @@ class Database:
             if playlist_id is None:
                 raise click.UsageError("No playlist in database. Run --1 first.")
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        with self._lock:
+            most_recent_id = None
+            most_recent_time = ""
+            
+            # Check playlists
+            for playlist_id, playlist_data in self._data.get("playlists", {}).items():
+                last_synced = playlist_data.get("last_synced", "")
+                if last_synced > most_recent_time:
+                    most_recent_time = last_synced
+                    most_recent_id = playlist_id
+            
+            # Check liked_songs
+            liked = self._data.get("liked_songs")
+            if liked is not None:
+                last_synced = liked.get("last_synced", "")
+                if last_synced > most_recent_time:
+                    most_recent_time = last_synced
+                    most_recent_id = LIKED_SONGS_KEY
+            
+            return most_recent_id
     
     # =========================================================================
     # Track Operations
     # =========================================================================
     
     def add_track(
-    self,
-    playlist_id: str,
-    track_id: str,
-    track_data: dict[str, Any]
+        self,
+        playlist_id: str,
+        track_id: str,
+        track_data: dict[str, Any]
     ) -> None:
         """
         Add a track to a playlist in the database.
@@ -338,13 +466,13 @@ class Database:
         
         Behavior:
             - If track already exists, update metadata but preserve:
-            youtube_url, downloaded, file_path, download_timestamp,
-            lyrics_fetched, lyrics_text, lyrics_synced, lyrics_source,
-            metadata_embedded, lyrics_embedded
+              youtube_url, downloaded, file_path, download_timestamp,
+              lyrics_fetched, lyrics_text, lyrics_synced, lyrics_source,
+              metadata_embedded, lyrics_embedded
             - If track is new, add with:
-            youtube_url=None, downloaded=False, file_path=None,
-            lyrics_fetched=False, lyrics_text=None, lyrics_synced=False,
-            lyrics_source=None, metadata_embedded=False, lyrics_embedded=False
+              youtube_url=None, downloaded=False, file_path=None,
+              lyrics_fetched=False, lyrics_text=None, lyrics_synced=False,
+              lyrics_source=None, metadata_embedded=False, lyrics_embedded=False
             - Save to disk
         
         Raises:
@@ -353,8 +481,45 @@ class Database:
         Thread Safety:
             Acquires _lock for the entire operation.
         """
-        raise NotImplementedError("Contract only - implementation pending")
-        
+        with self._lock:
+            container = self._get_tracks_container(playlist_id)
+            if container is None:
+                raise DatabaseError(
+                    f"Playlist not found: {playlist_id}",
+                    details={"playlist_id": playlist_id}
+                )
+            
+            tracks = container.setdefault("tracks", {})
+            
+            if track_id in tracks:
+                # Update existing - preserve download state
+                existing = tracks[track_id]
+                track_data["youtube_url"] = existing.get("youtube_url")
+                track_data["downloaded"] = existing.get("downloaded", False)
+                track_data["file_path"] = existing.get("file_path")
+                track_data["download_timestamp"] = existing.get("download_timestamp")
+                track_data["lyrics_fetched"] = existing.get("lyrics_fetched", False)
+                track_data["lyrics_text"] = existing.get("lyrics_text")
+                track_data["lyrics_synced"] = existing.get("lyrics_synced", False)
+                track_data["lyrics_source"] = existing.get("lyrics_source")
+                track_data["metadata_embedded"] = existing.get("metadata_embedded", False)
+                track_data["lyrics_embedded"] = existing.get("lyrics_embedded", False)
+            else:
+                # New track - initialize download fields
+                track_data["youtube_url"] = None
+                track_data["downloaded"] = False
+                track_data["file_path"] = None
+                track_data["download_timestamp"] = None
+                track_data["lyrics_fetched"] = False
+                track_data["lyrics_text"] = None
+                track_data["lyrics_synced"] = False
+                track_data["lyrics_source"] = None
+                track_data["metadata_embedded"] = False
+                track_data["lyrics_embedded"] = False
+            
+            tracks[track_id] = track_data
+            self._save()
+    
     def add_tracks_batch(
         self,
         playlist_id: str,
@@ -382,7 +547,46 @@ class Database:
             Use this instead of multiple add_track() calls when adding
             many tracks (e.g., after fetching a playlist from Spotify).
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        with self._lock:
+            container = self._get_tracks_container(playlist_id)
+            if container is None:
+                raise DatabaseError(
+                    f"Playlist not found: {playlist_id}",
+                    details={"playlist_id": playlist_id}
+                )
+            
+            tracks_dict = container.setdefault("tracks", {})
+            
+            for track_id, track_data in tracks:
+                if track_id in tracks_dict:
+                    # Update existing - preserve download state
+                    existing = tracks_dict[track_id]
+                    track_data["youtube_url"] = existing.get("youtube_url")
+                    track_data["downloaded"] = existing.get("downloaded", False)
+                    track_data["file_path"] = existing.get("file_path")
+                    track_data["download_timestamp"] = existing.get("download_timestamp")
+                    track_data["lyrics_fetched"] = existing.get("lyrics_fetched", False)
+                    track_data["lyrics_text"] = existing.get("lyrics_text")
+                    track_data["lyrics_synced"] = existing.get("lyrics_synced", False)
+                    track_data["lyrics_source"] = existing.get("lyrics_source")
+                    track_data["metadata_embedded"] = existing.get("metadata_embedded", False)
+                    track_data["lyrics_embedded"] = existing.get("lyrics_embedded", False)
+                else:
+                    # New track - initialize download fields
+                    track_data["youtube_url"] = None
+                    track_data["downloaded"] = False
+                    track_data["file_path"] = None
+                    track_data["download_timestamp"] = None
+                    track_data["lyrics_fetched"] = False
+                    track_data["lyrics_text"] = None
+                    track_data["lyrics_synced"] = False
+                    track_data["lyrics_source"] = None
+                    track_data["metadata_embedded"] = False
+                    track_data["lyrics_embedded"] = False
+                
+                tracks_dict[track_id] = track_data
+            
+            self._save()
     
     def get_track(self, playlist_id: str, track_id: str) -> dict[str, Any] | None:
         """
@@ -399,7 +603,14 @@ class Database:
         Thread Safety:
             Acquires _lock and returns a copy.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        with self._lock:
+            container = self._get_tracks_container(playlist_id)
+            if container is None:
+                return None
+            track = container.get("tracks", {}).get(track_id)
+            if track is None:
+                return None
+            return dict(track)  # Return a copy
     
     def get_tracks_without_youtube_url(
         self,
@@ -421,7 +632,19 @@ class Database:
         Thread Safety:
             Acquires _lock and returns copies of track data.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        with self._lock:
+            container = self._get_tracks_container(playlist_id)
+            if container is None:
+                return []
+            
+            result = []
+            for track_id, track_data in container.get("tracks", {}).items():
+                if track_data.get("youtube_url") is None:
+                    track_copy = dict(track_data)
+                    track_copy["track_id"] = track_id
+                    result.append(track_copy)
+            
+            return result
     
     def get_tracks_not_downloaded(
         self,
@@ -435,7 +658,7 @@ class Database:
         
         Returns:
             List of track data dictionaries where:
-            - youtube_url is not None
+            - youtube_url is not None and not YOUTUBE_MATCH_FAILED
             - downloaded is False
             Each dict includes 'track_id' key for reference.
         
@@ -445,7 +668,22 @@ class Database:
         Thread Safety:
             Acquires _lock and returns copies of track data.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        with self._lock:
+            container = self._get_tracks_container(playlist_id)
+            if container is None:
+                return []
+            
+            result = []
+            for track_id, track_data in container.get("tracks", {}).items():
+                youtube_url = track_data.get("youtube_url")
+                if (youtube_url is not None 
+                    and youtube_url != YOUTUBE_MATCH_FAILED
+                    and not track_data.get("downloaded", False)):
+                    track_copy = dict(track_data)
+                    track_copy["track_id"] = track_id
+                    result.append(track_copy)
+            
+            return result
     
     def set_youtube_url(
         self,
@@ -471,7 +709,23 @@ class Database:
         Thread Safety:
             Acquires _lock for the entire operation.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        with self._lock:
+            container = self._get_tracks_container(playlist_id)
+            if container is None:
+                raise DatabaseError(
+                    f"Playlist not found: {playlist_id}",
+                    details={"playlist_id": playlist_id}
+                )
+            
+            tracks = container.get("tracks", {})
+            if track_id not in tracks:
+                raise DatabaseError(
+                    f"Track not found: {track_id}",
+                    details={"playlist_id": playlist_id, "track_id": track_id}
+                )
+            
+            tracks[track_id]["youtube_url"] = youtube_url
+            self._save()
     
     def mark_downloaded(
         self,
@@ -499,7 +753,25 @@ class Database:
         Thread Safety:
             Acquires _lock for the entire operation.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        with self._lock:
+            container = self._get_tracks_container(playlist_id)
+            if container is None:
+                raise DatabaseError(
+                    f"Playlist not found: {playlist_id}",
+                    details={"playlist_id": playlist_id}
+                )
+            
+            tracks = container.get("tracks", {})
+            if track_id not in tracks:
+                raise DatabaseError(
+                    f"Track not found: {track_id}",
+                    details={"playlist_id": playlist_id, "track_id": track_id}
+                )
+            
+            tracks[track_id]["downloaded"] = True
+            tracks[track_id]["file_path"] = str(file_path)
+            tracks[track_id]["download_timestamp"] = self._now_iso()
+            self._save()
     
     def mark_youtube_match_failed(
         self,
@@ -532,7 +804,23 @@ class Database:
         See Also:
             YOUTUBE_MATCH_FAILED: The constant value used to mark failures.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        with self._lock:
+            container = self._get_tracks_container(playlist_id)
+            if container is None:
+                raise DatabaseError(
+                    f"Playlist not found: {playlist_id}",
+                    details={"playlist_id": playlist_id}
+                )
+            
+            tracks = container.get("tracks", {})
+            if track_id not in tracks:
+                raise DatabaseError(
+                    f"Track not found: {track_id}",
+                    details={"playlist_id": playlist_id, "track_id": track_id}
+                )
+            
+            tracks[track_id]["youtube_url"] = YOUTUBE_MATCH_FAILED
+            self._save()
     
     # =========================================================================
     # Liked Songs Operations
@@ -550,7 +838,17 @@ class Database:
         Thread Safety:
             Acquires _lock for the entire operation.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        with self._lock:
+            if self._data.get("liked_songs") is None:
+                self._data["liked_songs"] = {
+                    "last_synced": self._now_iso(),
+                    "tracks": {}
+                }
+                self._save()
+            else:
+                # Update last_synced timestamp
+                self._data["liked_songs"]["last_synced"] = self._now_iso()
+                self._save()
     
     def get_liked_songs_track_ids(self) -> set[str]:
         """
@@ -563,20 +861,23 @@ class Database:
         Thread Safety:
             Acquires _lock for the duration of the read.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        with self._lock:
+            liked = self._data.get("liked_songs")
+            if liked is None:
+                return set()
+            return set(liked.get("tracks", {}).keys())
     
-        
     # =========================================================================
     # Lyrics
     # =========================================================================
     
     def set_lyrics(
-    self,
-    playlist_id: str,
-    track_id: str,
-    lyrics_text: str,
-    is_synced: bool,
-    source: str
+        self,
+        playlist_id: str,
+        track_id: str,
+        lyrics_text: str,
+        is_synced: bool,
+        source: str
     ) -> None:
         """
         Store fetched lyrics for a track.
@@ -611,9 +912,27 @@ class Database:
                 source="synced"
             )
         """
-        raise NotImplementedError("Contract only - implementation pending")
-
-
+        with self._lock:
+            container = self._get_tracks_container(playlist_id)
+            if container is None:
+                raise DatabaseError(
+                    f"Playlist not found: {playlist_id}",
+                    details={"playlist_id": playlist_id}
+                )
+            
+            tracks = container.get("tracks", {})
+            if track_id not in tracks:
+                raise DatabaseError(
+                    f"Track not found: {track_id}",
+                    details={"playlist_id": playlist_id, "track_id": track_id}
+                )
+            
+            tracks[track_id]["lyrics_text"] = lyrics_text
+            tracks[track_id]["lyrics_synced"] = is_synced
+            tracks[track_id]["lyrics_source"] = source
+            tracks[track_id]["lyrics_fetched"] = True
+            self._save()
+    
     def mark_lyrics_fetched(
         self,
         playlist_id: str,
@@ -645,9 +964,24 @@ class Database:
             lyrics were found. This prevents the system from repeatedly trying
             to fetch lyrics for tracks that don't have any available.
         """
-        raise NotImplementedError("Contract only - implementation pending")
-
-
+        with self._lock:
+            container = self._get_tracks_container(playlist_id)
+            if container is None:
+                raise DatabaseError(
+                    f"Playlist not found: {playlist_id}",
+                    details={"playlist_id": playlist_id}
+                )
+            
+            tracks = container.get("tracks", {})
+            if track_id not in tracks:
+                raise DatabaseError(
+                    f"Track not found: {track_id}",
+                    details={"playlist_id": playlist_id, "track_id": track_id}
+                )
+            
+            tracks[track_id]["lyrics_fetched"] = True
+            self._save()
+    
     def get_tracks_needing_lyrics(
         self,
         playlist_id: str
@@ -670,9 +1004,21 @@ class Database:
         Thread Safety:
             Acquires _lock and returns copies of track data.
         """
-        raise NotImplementedError("Contract only - implementation pending")
-    
+        with self._lock:
+            container = self._get_tracks_container(playlist_id)
+            if container is None:
+                return []
             
+            result = []
+            for track_id, track_data in container.get("tracks", {}).items():
+                if (track_data.get("downloaded", False) 
+                    and not track_data.get("lyrics_fetched", False)):
+                    track_copy = dict(track_data)
+                    track_copy["track_id"] = track_id
+                    result.append(track_copy)
+            
+            return result
+    
     # =========================================================================
     # Metadata embedding
     # =========================================================================
@@ -708,9 +1054,26 @@ class Database:
             If the file was renamed to its final name during embedding,
             pass the new path to update the database.
         """
-        raise NotImplementedError("Contract only - implementation pending")
-
-
+        with self._lock:
+            container = self._get_tracks_container(playlist_id)
+            if container is None:
+                raise DatabaseError(
+                    f"Playlist not found: {playlist_id}",
+                    details={"playlist_id": playlist_id}
+                )
+            
+            tracks = container.get("tracks", {})
+            if track_id not in tracks:
+                raise DatabaseError(
+                    f"Track not found: {track_id}",
+                    details={"playlist_id": playlist_id, "track_id": track_id}
+                )
+            
+            tracks[track_id]["metadata_embedded"] = True
+            if new_file_path is not None:
+                tracks[track_id]["file_path"] = str(new_file_path)
+            self._save()
+    
     def mark_lyrics_embedded(
         self,
         playlist_id: str,
@@ -737,9 +1100,24 @@ class Database:
             This should only be called if the track actually has lyrics.
             Tracks without lyrics should have lyrics_embedded remain False.
         """
-        raise NotImplementedError("Contract only - implementation pending")
-
-
+        with self._lock:
+            container = self._get_tracks_container(playlist_id)
+            if container is None:
+                raise DatabaseError(
+                    f"Playlist not found: {playlist_id}",
+                    details={"playlist_id": playlist_id}
+                )
+            
+            tracks = container.get("tracks", {})
+            if track_id not in tracks:
+                raise DatabaseError(
+                    f"Track not found: {track_id}",
+                    details={"playlist_id": playlist_id, "track_id": track_id}
+                )
+            
+            tracks[track_id]["lyrics_embedded"] = True
+            self._save()
+    
     def get_tracks_needing_embedding(
         self,
         playlist_id: str
@@ -762,9 +1140,21 @@ class Database:
         Thread Safety:
             Acquires _lock and returns copies of track data.
         """
-        raise NotImplementedError("Contract only - implementation pending")
-
-
+        with self._lock:
+            container = self._get_tracks_container(playlist_id)
+            if container is None:
+                return []
+            
+            result = []
+            for track_id, track_data in container.get("tracks", {}).items():
+                if (track_data.get("downloaded", False) 
+                    and not track_data.get("metadata_embedded", False)):
+                    track_copy = dict(track_data)
+                    track_copy["track_id"] = track_id
+                    result.append(track_copy)
+            
+            return result
+    
     # =========================================================================
     # Statistics
     # =========================================================================
@@ -791,7 +1181,48 @@ class Database:
         See Also:
             YOUTUBE_MATCH_FAILED: The constant value used to identify failed matches.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        with self._lock:
+            container = self._get_tracks_container(playlist_id)
+            if container is None:
+                return {
+                    "total": 0,
+                    "matched": 0,
+                    "downloaded": 0,
+                    "failed_match": 0,
+                    "pending_match": 0,
+                    "pending_download": 0
+                }
+            
+            tracks = container.get("tracks", {})
+            
+            total = len(tracks)
+            matched = 0
+            downloaded = 0
+            failed_match = 0
+            pending_match = 0
+            
+            for track_data in tracks.values():
+                youtube_url = track_data.get("youtube_url")
+                
+                if youtube_url is None:
+                    pending_match += 1
+                elif youtube_url == YOUTUBE_MATCH_FAILED:
+                    failed_match += 1
+                else:
+                    matched += 1
+                    if track_data.get("downloaded", False):
+                        downloaded += 1
+            
+            pending_download = matched - downloaded
+            
+            return {
+                "total": total,
+                "matched": matched,
+                "downloaded": downloaded,
+                "failed_match": failed_match,
+                "pending_match": pending_match,
+                "pending_download": pending_download
+            }
     
     # =========================================================================
     # Utility
@@ -824,7 +1255,18 @@ class Database:
             max_num = database.get_max_assigned_number(playlist_id)
             # If max_num is 42, new tracks start from 43
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        with self._lock:
+            container = self._get_tracks_container(playlist_id)
+            if container is None:
+                return 0
+            
+            max_num = 0
+            for track_data in container.get("tracks", {}).values():
+                assigned = track_data.get("assigned_number")
+                if assigned is not None and assigned > max_num:
+                    max_num = assigned
+            
+            return max_num
     
     def get_next_track_number(self, playlist_id: str) -> int:
         """
@@ -847,4 +1289,4 @@ class Database:
         Note:
             This is a convenience wrapper around get_max_assigned_number().
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        return self.get_max_assigned_number(playlist_id) + 1

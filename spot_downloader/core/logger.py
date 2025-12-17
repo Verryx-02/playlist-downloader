@@ -102,7 +102,11 @@ class TqdmLoggingHandler(logging.Handler):
         Thread Safety:
             This method is thread-safe as tqdm.write() handles synchronization.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        try:
+            msg = self.format(record)
+            tqdm.write(msg, file=self.stream)
+        except Exception:
+            self.handleError(record)
 
 
 class DownloadFailedTrackHandler(logging.Handler):
@@ -166,7 +170,7 @@ class DownloadFailedTrackHandler(logging.Handler):
         Called by setup_logging() after handler is created.
         File is opened in write mode (overwrites existing content).
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        self.report_file = open(self.report_path, "w", encoding="utf-8")
     
     def emit(self, record: logging.LogRecord) -> None:
         """
@@ -176,7 +180,7 @@ class DownloadFailedTrackHandler(logging.Handler):
             record: The log record to check and potentially write.
         
         Behavior:
-            1. Check if record has 'failed_track_name' attribute
+            1. Check if record has 'download_failed_track_name' attribute
             2. If not present, ignore the record (return immediately)
             3. If present, extract track info and write to report file
             4. Format: "{number}-{track_name}-{artist}.m4a\\nSpotify URL\\n\\n"
@@ -186,7 +190,30 @@ class DownloadFailedTrackHandler(logging.Handler):
             Writes are NOT automatically thread-safe. The file should be
             protected by a lock if multiple threads may log simultaneously.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        # Check if this record has failed track info
+        if not hasattr(record, "download_failed_track_name"):
+            return
+        
+        if self.report_file is None:
+            return
+        
+        try:
+            track_name = getattr(record, "download_failed_track_name", "Unknown")
+            artist = getattr(record, "download_failed_track_artist", "Unknown")
+            url = getattr(record, "download_failed_track_url", "")
+            number = getattr(record, "download_failed_track_number", None)
+            
+            # Format filename
+            if number is not None:
+                filename = f"{number}-{track_name}-{artist}.m4a"
+            else:
+                filename = f"{track_name}-{artist}.m4a"
+            
+            self.report_file.write(f"{filename}\n")
+            self.report_file.write(f"{url}\n\n")
+            self.report_file.flush()
+        except Exception:
+            self.handleError(record)
     
     def close(self) -> None:
         """
@@ -195,7 +222,13 @@ class DownloadFailedTrackHandler(logging.Handler):
         Called automatically when logging is shut down.
         Safe to call multiple times.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        if self.report_file is not None:
+            try:
+                self.report_file.close()
+            except Exception:
+                pass
+            self.report_file = None
+        super().close()
 
 
 class LyricsFailedTrackHandler(logging.Handler):
@@ -257,7 +290,7 @@ class LyricsFailedTrackHandler(logging.Handler):
         Called by setup_logging() after handler is created.
         File is opened in write mode (overwrites existing content).
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        self.report_file = open(self.report_path, "w", encoding="utf-8")
     
     def emit(self, record: logging.LogRecord) -> None:
         """
@@ -277,7 +310,30 @@ class LyricsFailedTrackHandler(logging.Handler):
             Writes are NOT automatically thread-safe. The file should be
             protected by a lock if multiple threads may log simultaneously.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        # Check if this record has lyrics failed track info
+        if not hasattr(record, "lyrics_failed_track_name"):
+            return
+        
+        if self.report_file is None:
+            return
+        
+        try:
+            track_name = getattr(record, "lyrics_failed_track_name", "Unknown")
+            artist = getattr(record, "lyrics_failed_track_artist", "Unknown")
+            url = getattr(record, "lyrics_failed_track_url", "")
+            number = getattr(record, "lyrics_failed_track_number", None)
+            
+            # Format filename
+            if number is not None:
+                filename = f"{number}-{track_name}-{artist}.m4a"
+            else:
+                filename = f"??-{track_name}-{artist}.m4a"
+            
+            self.report_file.write(f"{filename}\n")
+            self.report_file.write(f"{url}\n\n")
+            self.report_file.flush()
+        except Exception:
+            self.handleError(record)
     
     def close(self) -> None:
         """
@@ -286,7 +342,13 @@ class LyricsFailedTrackHandler(logging.Handler):
         Called automatically when logging is shut down.
         Safe to call multiple times.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        if self.report_file is not None:
+            try:
+                self.report_file.close()
+            except Exception:
+                pass
+            self.report_file = None
+        super().close()
     
 
 class ErrorOnlyFilter(logging.Filter):
@@ -309,7 +371,7 @@ class ErrorOnlyFilter(logging.Filter):
         Returns:
             True if record.levelno >= ERROR (40), False otherwise.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        return record.levelno >= logging.ERROR
 
 
 def setup_logging(output_dir: Path) -> None:
@@ -366,7 +428,48 @@ def setup_logging(output_dir: Path) -> None:
         log_download_failure(): Helper to log with correct extra fields
         log_lyrics_failure(): Helper to log with correct extra fields
     """
-    raise NotImplementedError("Contract only - implementation pending")
+    # Create output directory if needed
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Get root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    
+    # Remove any existing handlers
+    root_logger.handlers.clear()
+    
+    # Console handler (tqdm-compatible)
+    console_handler = TqdmLoggingHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter(CONSOLE_LOG_FORMAT))
+    root_logger.addHandler(console_handler)
+    
+    # Full log file handler
+    full_log_path = output_dir / LOG_FULL_FILENAME
+    full_handler = logging.FileHandler(full_log_path, mode="w", encoding="utf-8")
+    full_handler.setLevel(logging.DEBUG)
+    full_handler.setFormatter(logging.Formatter(FILE_LOG_FORMAT, FILE_DATE_FORMAT))
+    root_logger.addHandler(full_handler)
+    
+    # Error-only log file handler
+    error_log_path = output_dir / LOG_ERRORS_FILENAME
+    error_handler = logging.FileHandler(error_log_path, mode="w", encoding="utf-8")
+    error_handler.setLevel(logging.DEBUG)  # Filter handles the level restriction
+    error_handler.setFormatter(logging.Formatter(FILE_LOG_FORMAT, FILE_DATE_FORMAT))
+    error_handler.addFilter(ErrorOnlyFilter())
+    root_logger.addHandler(error_handler)
+    
+    # Download failures handler
+    download_failures_path = output_dir / DOWNLOAD_FAILURES_FILENAME
+    download_handler = DownloadFailedTrackHandler(download_failures_path)
+    download_handler.open()
+    root_logger.addHandler(download_handler)
+    
+    # Lyrics failures handler
+    lyrics_failures_path = output_dir / LYRICS_FAILURES_FILENAME
+    lyrics_handler = LyricsFailedTrackHandler(lyrics_failures_path)
+    lyrics_handler.open()
+    root_logger.addHandler(lyrics_handler)
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -436,7 +539,15 @@ def log_download_failure(
             assigned_number=42
         )
     """
-    raise NotImplementedError("Contract only - implementation pending")
+    logger.error(
+        f"Download failed: {track_name} - {error_message}",
+        extra={
+            "download_failed_track_name": track_name,
+            "download_failed_track_artist": artist,
+            "download_failed_track_url": spotify_url,
+            "download_failed_track_number": assigned_number,
+        }
+    )
 
 
 def log_lyrics_failure(
@@ -482,7 +593,15 @@ def log_lyrics_failure(
         #    "42-Instrumental Track-Artist Name.m4a
         #     https://open.spotify.com/track/xxx"
     """
-    raise NotImplementedError("Contract only - implementation pending")
+    logger.warning(
+        f"No lyrics found for: {track_name}",
+        extra={
+            "lyrics_failed_track_name": track_name,
+            "lyrics_failed_track_artist": artist,
+            "lyrics_failed_track_url": spotify_url,
+            "lyrics_failed_track_number": assigned_number,
+        }
+    )
 
 
 def shutdown_logging() -> None:
@@ -501,4 +620,13 @@ def shutdown_logging() -> None:
         This is typically called in a finally block or atexit handler.
         After calling this function, logging will no longer work.
     """
-    raise NotImplementedError("Contract only - implementation pending")
+    root_logger = logging.getLogger()
+    
+    # Flush and close all handlers
+    for handler in root_logger.handlers[:]:
+        try:
+            handler.flush()
+            handler.close()
+        except Exception:
+            pass
+        root_logger.removeHandler(handler)

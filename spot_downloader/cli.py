@@ -407,7 +407,7 @@ def _load_configuration() -> Config:
     Raises:
         ConfigError: If configuration is invalid or missing.
     """
-    raise NotImplementedError("Contract only - implementation pending")
+    return load_config()
 
 
 def _initialize_database(output_dir: Path) -> Database:
@@ -423,7 +423,8 @@ def _initialize_database(output_dir: Path) -> Database:
     Raises:
         DatabaseError: If database cannot be initialized.
     """
-    raise NotImplementedError("Contract only - implementation pending")
+    db_path = output_dir / "database.json"
+    return Database(db_path)
 
 
 def _initialize_spotify(config: Config, user_auth: bool) -> None:
@@ -437,7 +438,11 @@ def _initialize_spotify(config: Config, user_auth: bool) -> None:
     Raises:
         SpotifyError: If authentication fails.
     """
-    raise NotImplementedError("Contract only - implementation pending")
+    SpotifyClient.init(
+        client_id=config.spotify.client_id,
+        client_secret=config.spotify.client_secret,
+        user_auth=user_auth
+    )
 
 
 def _run_phase1(
@@ -464,7 +469,25 @@ def _run_phase1(
         3. Log track counts
         4. Return tracks for next phase
     """
-    raise NotImplementedError("Contract only - implementation pending")
+    logger.info("=" * 60)
+    logger.info("PHASE 1: Fetching Spotify metadata")
+    logger.info("=" * 60)
+    
+    if liked:
+        liked_songs, tracks = fetch_liked_songs_phase1(database, sync_mode=sync)
+        logger.info(f"Fetched {liked_songs.total_tracks} liked songs")
+    else:
+        playlist, tracks = fetch_playlist_phase1(database, url, sync_mode=sync)
+        logger.info(f"Fetched playlist: {playlist.name}")
+        logger.info(f"Total tracks: {playlist.total_tracks}")
+    
+    if sync:
+        logger.info(f"Sync mode: {len(tracks)} new tracks to process")
+    else:
+        logger.info(f"Tracks to process: {len(tracks)}")
+    
+    logger.info("PHASE 1 complete")
+    return list(tracks)
 
 
 def _run_phase2(
@@ -659,7 +682,18 @@ def _print_final_stats(database: Database, playlist_id: str) -> None:
         - Downloaded tracks
         - Failed tracks
     """
-    raise NotImplementedError("Contract only - implementation pending")
+    stats = database.get_playlist_stats(playlist_id)
+    
+    logger.info("=" * 60)
+    logger.info("FINAL STATISTICS")
+    logger.info("=" * 60)
+    logger.info(f"Total tracks:      {stats['total']}")
+    logger.info(f"Matched:           {stats['matched']}")
+    logger.info(f"Downloaded:        {stats['downloaded']}")
+    logger.info(f"Failed to match:   {stats['failed_match']}")
+    logger.info(f"Pending match:     {stats['pending_match']}")
+    logger.info(f"Pending download:  {stats['pending_download']}")
+    logger.info("=" * 60)
 
 
 def main() -> None:

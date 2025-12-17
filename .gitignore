@@ -39,6 +39,7 @@ venv.bak/
 playlist-dl.log*
 tokens.json
 config.yaml
+.cache
 
 # Downloaded content
 downloads/
