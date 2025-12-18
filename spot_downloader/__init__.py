@@ -13,7 +13,7 @@ Architecture:
         - Connect to Spotify API
         - Fetch playlist or Liked Songs
         - Extract track metadata (title, artist, album, etc.)
-        - Store in JSON database
+        - Store in SQLite database
     
     PHASE 2 (youtube/): Match tracks on YouTube Music
         - Search YouTube Music for each track
@@ -64,7 +64,7 @@ Usage:
         
         config = load_config()
         setup_logging(config.output.directory)
-        database = Database(config.output.directory / "database.json")
+        database = Database(config.output.directory / "database.db")
         
         SpotifyClient.init(config.spotify.client_id, config.spotify.client_secret)
         

@@ -4,7 +4,7 @@ Core module for spot-downloader.
 This module provides the foundational components used throughout the application:
     - exceptions: Custom exception classes for error handling
     - config: Configuration loading and validation
-    - database: Thread-safe JSON database for persistent storage
+    - database: Thread-safe SQLite database for persistent storage
     - logger: Logging system with multiple outputs
 
 Usage:

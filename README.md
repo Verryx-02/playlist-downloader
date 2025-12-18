@@ -101,13 +101,13 @@ This will open your browser for Spotify authentication (required to access your 
 You can run each phase independently:
 
 ```bash
-# PHASE 1: Fetch Spotify metadata only and save them in json
+# PHASE 1: Fetch Spotify metadata only and save them in SQLite database
 spot --1 --url "https://open.spotify.com/playlist/..."
 
-# PHASE 2: Match tracks on YouTube Music only (based on json data)
+# PHASE 2: Match tracks on YouTube Music only (based on db data)
 spot --2
 
-# PHASE 3: Download and process audio only (based on json data)
+# PHASE 3: Download and process audio only (based on db data)
 spot --3
 
 # PHASE 4: Fetch lyrics
@@ -169,7 +169,7 @@ Three log files are created in the output directory:
 
 ### Database
 
-A `database.json` file tracks the state of all playlists and tracks, enabling:
+A `database.db` file tracks the state of all playlists and tracks, enabling:
 - Resume after interruption
 - Sync mode (detect new tracks)
 - Avoiding re-downloads
@@ -188,7 +188,7 @@ A `database.json` file tracks the state of all playlists and tracks, enabling:
     ├── core/
     │   ├── __init__.py       # Core module exports
     │   ├── config.py         # Configuration loading and validation
-    │   ├── database.py       # Thread-safe JSON database
+    │   ├── database.py       # Thread-safe SQLite database
     │   ├── exceptions.py     # Custom exception classes
     │   └── logger.py         # Multi-file logging setup
     ├── spotify/
