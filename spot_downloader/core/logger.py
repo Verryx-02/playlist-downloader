@@ -38,6 +38,7 @@ LOG_FULL_FILENAME = "log_full.log"
 LOG_ERRORS_FILENAME = "log_errors.log"
 DOWNLOAD_FAILURES_FILENAME = "download_failures.log"
 LYRICS_FAILURES_FILENAME = "lyrics_failures.log"
+MATCH_CLOSE_ALTERNATIVES_FILENAME = "match_close_alternatives.log"
 
 # Old names:
 # LOG_FULL_FILENAME = "log_full.txt"
@@ -351,6 +352,155 @@ class LyricsFailedTrackHandler(logging.Handler):
         super().close()
     
 
+class MatchCloseAlternativesHandler(logging.Handler):
+    """
+    Custom handler that captures matches with close alternatives for review.
+    
+    This handler listens for log records that contain match alternative
+    information and writes them to match_close_alternatives.log in a
+    human-readable format for user verification:
+    
+        42-Song Title-Artist Name.m4a
+        Spotify: https://open.spotify.com/track/xxxxx
+        Selected: https://music.youtube.com/watch?v=yyyyy (score: 87.5)
+        Alternatives:
+          - https://music.youtube.com/watch?v=zzzzz (score: 85.2)
+          - https://www.youtube.com/watch?v=wwwww (score: 83.1)
+        Multiple close matches found. Verify if correct.
+        
+    The handler looks for specific extra fields in log records:
+        - 'match_alt_track_name': The name of the track
+        - 'match_alt_track_artist': The artist name
+        - 'match_alt_spotify_url': The Spotify URL
+        - 'match_alt_youtube_url': The selected YouTube URL
+        - 'match_alt_score': The score of the selected match
+        - 'match_alt_alternatives': List of (url, score) tuples for alternatives
+        - 'match_alt_track_number': The assigned track number (optional)
+    
+    Only records containing these fields are written to the report.
+    
+    Attributes:
+        report_path: Path to the match_close_alternatives.log file.
+        report_file: Open file handle (opened lazily on first write).
+    
+    Usage:
+        logger.warning(
+            "Multiple close matches found",
+            extra={
+                'match_alt_track_name': 'Song Title',
+                'match_alt_track_artist': 'Artist Name',
+                'match_alt_spotify_url': 'https://open.spotify.com/track/xxx',
+                'match_alt_youtube_url': 'https://music.youtube.com/watch?v=yyy',
+                'match_alt_score': 87.5,
+                'match_alt_alternatives': [
+                    ('https://music.youtube.com/watch?v=zzz', 85.2),
+                    ('https://www.youtube.com/watch?v=www', 83.1),
+                ],
+                'match_alt_track_number': 42
+            }
+        )
+    
+    Purpose:
+        When the matching algorithm finds multiple YouTube results with
+        very similar scores (within CLOSE_MATCH_THRESHOLD), it's uncertain
+        which is the correct match. This log file allows users to review
+        these ambiguous cases and use --replace to correct any mistakes.
+    """
+    
+    def __init__(self, report_path: Path) -> None:
+        """
+        Initialize the match alternatives handler.
+        
+        Args:
+            report_path: Path to the match_close_alternatives.log file.
+                         File will be created/overwritten.
+        
+        Raises:
+            IOError: If the file cannot be opened for writing.
+        """
+        super().__init__()
+        self.report_path = report_path
+        self.report_file: TextIO | None = None
+    
+    def open(self) -> None:
+        """
+        Open the report file for writing.
+        
+        Called by setup_logging() after handler is created.
+        File is opened in write mode (overwrites existing content).
+        """
+        self.report_file = open(self.report_path, "w", encoding="utf-8")
+    
+    def emit(self, record: logging.LogRecord) -> None:
+        """
+        Write match alternative info to report if present in the log record.
+        
+        Args:
+            record: The log record to check and potentially write.
+        
+        Behavior:
+            1. Check if record has 'match_alt_track_name' attribute
+            2. If not present, ignore the record (return immediately)
+            3. If present, extract all match info and write to report file
+            4. Format includes filename, URLs, scores, and alternatives
+        
+        Thread Safety:
+            Writes are NOT automatically thread-safe. The file should be
+            protected by a lock if multiple threads may log simultaneously.
+        """
+        # Check if this record has match alternative info
+        if not hasattr(record, "match_alt_track_name"):
+            return
+        
+        if self.report_file is None:
+            return
+        
+        try:
+            track_name = getattr(record, "match_alt_track_name", "Unknown")
+            artist = getattr(record, "match_alt_track_artist", "Unknown")
+            spotify_url = getattr(record, "match_alt_spotify_url", "")
+            youtube_url = getattr(record, "match_alt_youtube_url", "")
+            score = getattr(record, "match_alt_score", 0.0)
+            alternatives = getattr(record, "match_alt_alternatives", [])
+            number = getattr(record, "match_alt_track_number", None)
+            
+            # Format filename
+            if number is not None:
+                filename = f"{number}-{track_name}-{artist}.m4a"
+            else:
+                filename = f"??-{track_name}-{artist}.m4a"
+            
+            # Write entry
+            self.report_file.write(f"{filename}\n")
+            self.report_file.write(f"Spotify: {spotify_url}\n")
+            self.report_file.write(f"Selected: {youtube_url} (score: {score:.1f})\n")
+            
+            if alternatives:
+                self.report_file.write("Alternatives:\n")
+                for alt_url, alt_score in alternatives:
+                    self.report_file.write(f"  - {alt_url} (score: {alt_score:.1f})\n")
+            
+            self.report_file.write("Multiple close matches found. Verify if correct.\n\n")
+            self.report_file.flush()
+        except Exception:
+            self.handleError(record)
+    
+    def close(self) -> None:
+        """
+        Close the report file handle.
+        
+        Called automatically when logging is shut down.
+        Safe to call multiple times.
+        """
+        if self.report_file is not None:
+            try:
+                self.report_file.close()
+            except Exception:
+                pass
+            self.report_file = None
+        super().close()
+
+
 class ErrorOnlyFilter(logging.Filter):
     """
     Filter that only allows ERROR and CRITICAL level records.
@@ -413,7 +563,17 @@ def setup_logging(output_dir: Path) -> None:
              * lyrics_failed_track_artist: str - Artist name
              * lyrics_failed_track_url: str - Spotify URL
              * lyrics_failed_track_number: int | None - Assigned number
-        8. Add all handlers to root logger
+        8. Create and configure match close alternatives handler
+           - Path: output_dir/match_close_alternatives.log
+           - Listens for these extra fields in log records:
+             * match_alt_track_name: str - Track title
+             * match_alt_track_artist: str - Artist name
+             * match_alt_spotify_url: str - Spotify URL
+             * match_alt_youtube_url: str - Selected YouTube URL
+             * match_alt_score: float - Score of selected match
+             * match_alt_alternatives: list[tuple[str, float]] - Alternative URLs and scores
+             * match_alt_track_number: int | None - Assigned number
+        9. Add all handlers to root logger
     
     File Handling:
         - All log files are opened in write mode (overwrite existing)
@@ -427,6 +587,7 @@ def setup_logging(output_dir: Path) -> None:
     See Also:
         log_download_failure(): Helper to log with correct extra fields
         log_lyrics_failure(): Helper to log with correct extra fields
+        log_match_close_alternatives(): Helper to log match alternatives
     """
     # Create output directory if needed
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -470,6 +631,12 @@ def setup_logging(output_dir: Path) -> None:
     lyrics_handler = LyricsFailedTrackHandler(lyrics_failures_path)
     lyrics_handler.open()
     root_logger.addHandler(lyrics_handler)
+    
+    # Match close alternatives handler
+    match_alt_path = output_dir / MATCH_CLOSE_ALTERNATIVES_FILENAME
+    match_alt_handler = MatchCloseAlternativesHandler(match_alt_path)
+    match_alt_handler.open()
+    root_logger.addHandler(match_alt_handler)
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -600,6 +767,83 @@ def log_lyrics_failure(
             "lyrics_failed_track_artist": artist,
             "lyrics_failed_track_url": spotify_url,
             "lyrics_failed_track_number": assigned_number,
+        }
+    )
+
+
+def log_match_close_alternatives(
+    logger: logging.Logger,
+    track_name: str,
+    artist: str,
+    spotify_url: str,
+    youtube_url: str,
+    score: float,
+    alternatives: list[tuple[str, float]],
+    assigned_number: int | None = None
+) -> None:
+    """
+    Log a track match that has close alternatives requiring verification.
+    
+    This is a convenience function that logs match alternatives with the
+    correct extra fields for the MatchCloseAlternativesHandler to pick up.
+    
+    Should be called when the matching algorithm finds multiple YouTube
+    results with scores within CLOSE_MATCH_THRESHOLD of each other.
+    
+    Args:
+        logger: The logger to use for the message.
+        track_name: The name of the track.
+        artist: The artist name.
+        spotify_url: The Spotify URL for the track.
+        youtube_url: The YouTube URL of the selected match.
+        score: The score of the selected match.
+        alternatives: List of (youtube_url, score) tuples for close alternatives.
+                     These are matches within CLOSE_MATCH_THRESHOLD of the best.
+        assigned_number: Track number for filename display.
+    
+    Behavior:
+        Logs a WARNING level message and attaches extra fields that
+        MatchCloseAlternativesHandler will use to write to
+        match_close_alternatives.log.
+    
+    Note:
+        This should only be called when there are actual close alternatives,
+        not for every successful match.
+    
+    Example:
+        log_match_close_alternatives(
+            logger,
+            track_name="Song Title",
+            artist="Artist Name",
+            spotify_url="https://open.spotify.com/track/xxx",
+            youtube_url="https://music.youtube.com/watch?v=yyy",
+            score=87.5,
+            alternatives=[
+                ("https://music.youtube.com/watch?v=zzz", 85.2),
+                ("https://www.youtube.com/watch?v=www", 83.1),
+            ],
+            assigned_number=42
+        )
+        
+        # This will write to match_close_alternatives.log:
+        # 42-Song Title-Artist Name.m4a
+        # Spotify: https://open.spotify.com/track/xxx
+        # Selected: https://music.youtube.com/watch?v=yyy (score: 87.5)
+        # Alternatives:
+        #   - https://music.youtube.com/watch?v=zzz (score: 85.2)
+        #   - https://www.youtube.com/watch?v=www (score: 83.1)
+        # Multiple close matches found. Verify if correct.
+    """
+    logger.warning(
+        f"Multiple close matches for: {track_name} (selected score: {score:.1f})",
+        extra={
+            "match_alt_track_name": track_name,
+            "match_alt_track_artist": artist,
+            "match_alt_spotify_url": spotify_url,
+            "match_alt_youtube_url": youtube_url,
+            "match_alt_score": score,
+            "match_alt_alternatives": alternatives,
+            "match_alt_track_number": assigned_number,
         }
     )
 

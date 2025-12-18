@@ -143,14 +143,23 @@ class MatchResult:
                       - "Exact ISRC match"
                       - "High similarity (0.95) with duration match"
                       - "No results found for search query"
+        
+        close_alternatives: Tuple of (YouTubeResult, score) for matches
+                           within CLOSE_MATCH_THRESHOLD points of the best.
+                           Empty tuple if no close alternatives exist.
+                           Used for logging ambiguous matches so users can
+                           verify the selection and use --replace if needed.
     
     Properties:
         youtube_url: The YouTube URL if matched, None otherwise.
+        has_close_alternatives: True if there are alternative matches to review.
     
     Example:
         match = matcher.match_track(track)
         if match.matched:
             print(f"Found: {match.youtube_url} (confidence: {match.confidence:.2f})")
+            if match.has_close_alternatives:
+                print(f"Warning: {len(match.close_alternatives)} close alternatives found")
         else:
             print(f"No match: {match.match_reason}")
     """
@@ -160,11 +169,17 @@ class MatchResult:
     youtube_result: YouTubeResult | None
     confidence: float
     match_reason: str
+    close_alternatives: tuple[tuple[YouTubeResult, float], ...] = ()
     
     @property
     def youtube_url(self) -> str | None:
         """Get the YouTube URL if matched."""
         return self.youtube_result.url if self.youtube_result else None
+    
+    @property
+    def has_close_alternatives(self) -> bool:
+        """Check if there are close alternative matches to review."""
+        return len(self.close_alternatives) > 0
     
     @classmethod
     def success(
@@ -172,7 +187,8 @@ class MatchResult:
         spotify_id: str,
         youtube_result: YouTubeResult,
         confidence: float,
-        reason: str
+        reason: str,
+        close_alternatives: list[tuple[YouTubeResult, float]] | None = None
     ) -> "MatchResult":
         """
         Create a successful match result.
@@ -182,16 +198,38 @@ class MatchResult:
             youtube_result: The matching YouTubeResult.
             confidence: Match confidence (0.0-1.0).
             reason: Explanation of why this match was chosen.
+            close_alternatives: Optional list of (YouTubeResult, score) tuples
+                               for matches within CLOSE_MATCH_THRESHOLD of best.
+                               If provided, these will be logged for user review.
         
         Returns:
             MatchResult with matched=True.
+        
+        Example:
+            # Match with no alternatives
+            result = MatchResult.success(
+                spotify_id="abc123",
+                youtube_result=best_result,
+                confidence=0.95,
+                reason="High similarity match"
+            )
+            
+            # Match with close alternatives (will be logged)
+            result = MatchResult.success(
+                spotify_id="abc123",
+                youtube_result=best_result,
+                confidence=0.87,
+                reason="Best match with close alternatives",
+                close_alternatives=[(alt1, 84.5), (alt2, 83.2)]
+            )
         """
         return cls(
             spotify_id=spotify_id,
             matched=True,
             youtube_result=youtube_result,
             confidence=confidence,
-            match_reason=reason
+            match_reason=reason,
+            close_alternatives=tuple(close_alternatives) if close_alternatives else ()
         )
     
     @classmethod
@@ -204,12 +242,13 @@ class MatchResult:
             reason: Explanation of why matching failed.
         
         Returns:
-            MatchResult with matched=False.
+            MatchResult with matched=False and empty close_alternatives.
         """
         return cls(
             spotify_id=spotify_id,
             matched=False,
             youtube_result=None,
             confidence=0.0,
-            match_reason=reason
+            match_reason=reason,
+            close_alternatives=()
         )

@@ -62,6 +62,65 @@ SEARCH_OPTIONS = [
 ]
 
 
+# =============================================================================
+# MATCHING ALGORITHM IMPROVEMENTS - Additional scoring parameters
+# =============================================================================
+
+# Forbidden words that indicate alternative versions (from spotDL)
+# If Spotify title contains one of these but YouTube result doesn't,
+# apply FORBIDDEN_WORD_PENALTY to avoid mismatches
+FORBIDDEN_WORDS = (
+    "bassboosted",
+    "remix",
+    "remastered",
+    "remaster",
+    "reverb",
+    "bassboost",
+    "live",
+    "acoustic",
+    "8daudio",
+    "concert",
+    "acapella",
+    "slowed",
+    "instrumental",
+    "cover",
+)
+
+# Popularity-Views Correlation (Tier Relativi)
+# For high-popularity Spotify tracks, boost YouTube results in the high-views tier
+POPULARITY_HIGH_THRESHOLD = 70  # Spotify popularity score (0-100)
+VIEWS_TIER_HIGH_PERCENTILE = 0.30  # Top 30% of results = high views tier
+VIEWS_TIER_LOW_PERCENTILE = 0.70  # Bottom 30% of results = low views tier
+VIEWS_BOOST_HIGH_TIER = 5  # Bonus points for high-views results on popular tracks
+
+# Result Type Priority (Progressive Multiplier)
+# Bonus points based on result_type and verification status
+RESULT_TYPE_BONUS = {
+    "song_verified": 7,      # Official YT Music release, verified
+    "song_unverified": 5,    # YT Music song category, not verified
+    "video_verified": 2,     # Video from verified channel
+    "video_unverified": 0,   # Generic upload, no bonus
+}
+
+# Explicit Flag Matching (Asymmetric Penalties)
+# Bonus/penalty based on explicit flag correlation
+EXPLICIT_MATCH_SCORES = {
+    "both_explicit": 3,           # Both explicit: perfect match
+    "both_clean": 2,              # Both clean: good match
+    "spotify_explicit_yt_clean": -5,  # Spotify explicit, YT clean: likely censored version
+    "spotify_clean_yt_explicit": -2,  # Spotify clean, YT explicit: possible error
+    "unknown": 0,                 # One or both have None: no adjustment
+}
+
+# Forbidden Word Penalty
+# Applied when Spotify has a keyword (e.g., "remix") but YouTube doesn't
+FORBIDDEN_WORD_PENALTY = -4
+
+# Close Match Threshold for Tiebreaker
+# When multiple results have scores within this range, log alternatives
+CLOSE_MATCH_THRESHOLD = 5.0
+
+
 class YouTubeMatcher:
     """
     Matches Spotify tracks to YouTube Music videos/songs.
@@ -284,48 +343,120 @@ class YouTubeMatcher:
         Score a YouTube result against a Spotify track.
         
         Uses fuzzy string matching to compare titles and artists,
-        with bonus points for verified sources.
+        with bonus/penalty points based on multiple signals.
         
         Args:
             result: YouTubeResult candidate to score.
             track: Spotify Track to match against.
         
         Returns:
-            Score from 0 to 100 (higher is better match).
+            Score (higher is better match). Base range 0-100, but bonuses
+            and penalties can push it outside this range.
         
-        Scoring Components:
+        Scoring Components (Base - from spotDL):
             - Title similarity (0-100): Uses rapidfuzz ratio
             - Artist similarity (0-100): Compares artist strings
-            - Verification bonus (+5): If result.is_verified
             - Album match bonus (+5): If album names match
         
-        Final score = weighted average + bonuses
+        Scoring Components (Improvements):
+            
+            1. Result Type Priority (replaces simple verification bonus):
+               Based on combination of result_type and is_verified:
+               - song + verified: +7 (official YT Music release)
+               - song + unverified: +5 (YT Music category)
+               - video + verified: +2 (official video)
+               - video + unverified: +0 (no bonus)
+               See RESULT_TYPE_BONUS constant.
+            
+            2. Popularity-Views Correlation (Relative Tiers):
+               Only applied when track.popularity > POPULARITY_HIGH_THRESHOLD (70):
+               - Compute views tier relative to other candidates in the set
+               - High-views tier (top 30%): +VIEWS_BOOST_HIGH_TIER (+5)
+               - Medium/Low tiers: no adjustment
+               This filters spam/re-uploads for popular tracks without
+               discriminating against niche artists.
+               Note: Tier calculation requires the full candidate list,
+               so this is computed in _select_best_match() context.
+            
+            3. Explicit Flag Matching (Asymmetric Penalties):
+               Compares track.explicit with result.is_explicit:
+               - Both explicit: +3 (perfect match)
+               - Both clean: +2 (good match)
+               - Spotify explicit, YT clean: -5 (likely censored version)
+               - Spotify clean, YT explicit: -2 (possible tagging error)
+               - Either is None: 0 (insufficient data)
+               See EXPLICIT_MATCH_SCORES constant.
+            
+            4. Forbidden Words Check:
+               If Spotify title contains a keyword from FORBIDDEN_WORDS
+               (e.g., "remix", "live", "acoustic") but YouTube title doesn't:
+               - Apply FORBIDDEN_WORD_PENALTY (-4)
+               This prevents matching "Song (Remix)" to the original version.
+        
+        Final score = weighted_average(title, artist) + all_bonuses + all_penalties
         
         Algorithm:
-            This mirrors spotDL's scoring approach using rapidfuzz
-            for string comparison.
+            This extends spotDL's scoring approach, keeping the core
+            fuzzy matching while adding complementary signals for
+            improved accuracy.
         """
         raise NotImplementedError("Contract only - implementation pending")
     
     def _select_best_match(
         self,
         candidates: list[tuple[YouTubeResult, float]],
+        track: Track,
         min_score: float = MIN_SIMILARITY_SCORE
-    ) -> YouTubeResult | None:
+    ) -> tuple[YouTubeResult | None, list[tuple[YouTubeResult, float]]]:
         """
-        Select the best match from scored candidates.
+        Select the best match from scored candidates and identify close alternatives.
+        
+        This method also applies the Popularity-Views Correlation bonus
+        since it requires context about all candidates to compute relative tiers.
         
         Args:
             candidates: List of (YouTubeResult, score) tuples.
+                       Scores should already include base scoring from _score_result().
+            track: The Spotify Track being matched (needed for popularity check).
             min_score: Minimum acceptable score (0-100).
         
         Returns:
-            Best YouTubeResult if score >= min_score, None otherwise.
+            Tuple of:
+            - Best YouTubeResult if score >= min_score, None otherwise.
+            - List of (YouTubeResult, score) for alternatives within
+              CLOSE_MATCH_THRESHOLD points of the best match.
+              Empty list if no close alternatives or no valid match.
         
         Selection Logic:
-            1. Filter to candidates with score >= min_score
-            2. Sort by score descending
-            3. Return top result, or None if none qualify
+            1. Apply Popularity-Views Correlation:
+               If track.popularity > POPULARITY_HIGH_THRESHOLD:
+               a. Sort candidates by views (descending)
+               b. Identify high-views tier (top 30%)
+               c. Add VIEWS_BOOST_HIGH_TIER to candidates in high tier
+            
+            2. Filter to candidates with score >= min_score
+            
+            3. Sort by final score (descending)
+            
+            4. Select top result as best match
+            
+            5. Identify close alternatives (Conflict Resolution):
+               Find all other candidates with score difference < CLOSE_MATCH_THRESHOLD
+               from the best match. These are returned for logging/review.
+        
+        Tiebreaker Behavior:
+            When close alternatives exist, the caller should log them using
+            log_match_close_alternatives() so users can verify the selection.
+            The message format includes:
+            - The selected track with Spotify URL, YouTube URL, and score
+            - All alternatives with YouTube URL and score
+            - A notice: "Multiple close matches found. Verify if correct."
+        
+        Example:
+            candidates = [(result1, 85.0), (result2, 82.5), (result3, 60.0)]
+            best, alternatives = matcher._select_best_match(candidates, track)
+            # best = result1
+            # alternatives = [(result2, 82.5)]  # within 5 points of 85.0
         """
         raise NotImplementedError("Contract only - implementation pending")
 

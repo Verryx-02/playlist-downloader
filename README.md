@@ -157,14 +157,15 @@ Track numbers are assigned based on when tracks were added to the playlist (olde
 
 ### Log Files
 
-Three log files are created in the output directory:
+Five log files are created in the output directory:
 
 | File | Description |
 |------|-------------|
 | `log_full.log` | Complete log of all events |
 | `log_errors.log` | Only errors and critical issues |
-| `download_failures.log` | List of tracks whose audio download failed, including Spotify URLs         |
-| `lyrics_failures.log`   | List of tracks whose lyrics could not be retrieved, including Spotify URLs |
+| `download_failures.log` | List of tracks whose audio download failed, including Spotify URLs |
+| `lyrics_failures.log` | List of tracks whose lyrics could not be retrieved, including Spotify URLs |
+| `match_close_alternatives.log` | Tracks with multiple YouTube matches of similar score, for manual verification |
 
 
 ### Database
