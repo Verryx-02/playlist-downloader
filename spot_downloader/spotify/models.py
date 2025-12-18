@@ -113,6 +113,7 @@ class Track:
     
     Class Methods:
         from_spotify_api: Create Track from Spotify API response dict.
+        from_database_dict: Reconstruct Track from database storage.
         to_database_dict: Convert to dict for database storage.
     
     Example:

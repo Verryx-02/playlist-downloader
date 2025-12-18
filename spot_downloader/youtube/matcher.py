@@ -35,17 +35,25 @@ Usage:
     failed = [r for r in results if not r.matched]
 """
 
+import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
+from rapidfuzz import fuzz
 from ytmusicapi import YTMusic
 
 from spot_downloader.core.database import Database
-from spot_downloader.core.logger import get_logger
+from spot_downloader.core.logger import get_logger, log_match_close_alternatives
 from spot_downloader.spotify.models import Track
 from spot_downloader.youtube.models import MatchResult, YouTubeResult
 
 logger = get_logger(__name__)
 
+
+# =============================================================================
+# DURATION AND SIMILARITY THRESHOLDS
+# =============================================================================
 
 # Duration tolerance for matching (seconds)
 # If YouTube duration differs by more than this, result is rejected
@@ -55,11 +63,27 @@ DURATION_TOLERANCE_SECONDS = 10
 # Below this threshold, result is rejected even if duration matches
 MIN_SIMILARITY_SCORE = 70
 
+# Weights for title/artist similarity in final score
+# These sum to 1.0 and control the relative importance of title vs artist match
+TITLE_WEIGHT = 0.65
+ARTIST_WEIGHT = 0.35
+
 # Search options for ytmusicapi (mirrors spotDL configuration)
 SEARCH_OPTIONS = [
     {"filter": "songs", "ignore_spelling": True, "limit": 50},
     {"filter": "videos", "ignore_spelling": True, "limit": 50},
 ]
+
+
+# =============================================================================
+# RETRY CONFIGURATION FOR TRANSIENT ERRORS
+# =============================================================================
+
+# Maximum number of retry attempts for API calls
+MAX_SEARCH_RETRIES = 3
+
+# Base delay between retries (seconds) - uses exponential backoff
+RETRY_DELAY_SECONDS = 1.0
 
 
 # =============================================================================
@@ -90,7 +114,6 @@ FORBIDDEN_WORDS = (
 # For high-popularity Spotify tracks, boost YouTube results in the high-views tier
 POPULARITY_HIGH_THRESHOLD = 70  # Spotify popularity score (0-100)
 VIEWS_TIER_HIGH_PERCENTILE = 0.30  # Top 30% of results = high views tier
-VIEWS_TIER_LOW_PERCENTILE = 0.70  # Bottom 30% of results = low views tier
 VIEWS_BOOST_HIGH_TIER = 5  # Bonus points for high-views results on popular tracks
 
 # Result Type Priority (Progressive Multiplier)
@@ -112,6 +135,9 @@ EXPLICIT_MATCH_SCORES = {
     "unknown": 0,                 # One or both have None: no adjustment
 }
 
+# Album match bonus
+ALBUM_MATCH_BONUS = 5
+
 # Forbidden Word Penalty
 # Applied when Spotify has a keyword (e.g., "remix") but YouTube doesn't
 FORBIDDEN_WORD_PENALTY = -4
@@ -119,6 +145,46 @@ FORBIDDEN_WORD_PENALTY = -4
 # Close Match Threshold for Tiebreaker
 # When multiple results have scores within this range, log alternatives
 CLOSE_MATCH_THRESHOLD = 5.0
+
+
+def _normalize_text(text: str) -> str:
+    """
+    Normalize text for comparison by removing special characters and lowercasing.
+    
+    Args:
+        text: The text to normalize.
+    
+    Returns:
+        Normalized lowercase text with special characters removed.
+    """
+    # Remove text in parentheses/brackets (often contains version info)
+    # but keep the base text
+    text = re.sub(r'\s*[\(\[\{].*?[\)\]\}]\s*', ' ', text)
+    # Remove special characters except spaces
+    text = re.sub(r'[^\w\s]', '', text)
+    # Normalize whitespace
+    text = ' '.join(text.split())
+    return text.lower().strip()
+
+
+def _check_forbidden_words(spotify_title: str, youtube_title: str) -> bool:
+    """
+    Check if Spotify title contains a forbidden word that YouTube title lacks.
+    
+    Args:
+        spotify_title: The Spotify track title.
+        youtube_title: The YouTube result title.
+    
+    Returns:
+        True if Spotify has a forbidden word that YouTube lacks (penalty should apply).
+    """
+    spotify_lower = spotify_title.lower()
+    youtube_lower = youtube_title.lower()
+    
+    for word in FORBIDDEN_WORDS:
+        if word in spotify_lower and word not in youtube_lower:
+            return True
+    return False
 
 
 class YouTubeMatcher:
@@ -135,7 +201,8 @@ class YouTubeMatcher:
     
     Thread Safety:
         The match_track() method is thread-safe and can be called
-        from multiple threads simultaneously. Database operations
+        from multiple threads simultaneously. The ytmusicapi client
+        is stateless for search operations, and database operations
         use internal locking.
     
     Matching Strategy:
@@ -162,7 +229,7 @@ class YouTubeMatcher:
             print(f"Found: {result.youtube_url}")
         
         # Match multiple tracks with threading
-        results = matcher.match_tracks(tracks, num_threads=4)
+        results = matcher.match_tracks(tracks, playlist_id, num_threads=4)
     """
     
     def __init__(self, database: Database) -> None:
@@ -175,7 +242,8 @@ class YouTubeMatcher:
         Behavior:
             Creates a ytmusicapi.YTMusic client with English language.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        self._database = database
+        self._ytmusic = YTMusic(language="en")
     
     def match_track(self, track: Track) -> MatchResult:
         """
@@ -192,13 +260,22 @@ class YouTubeMatcher:
         
         Behavior:
             1. Try ISRC search if track has ISRC
-            2. If ISRC fails, try text search ("Artist - Title")
+            2. If ISRC search fails, try text search ("Artist - Title")
             3. Process search results:
                a. Convert to YouTubeResult objects
                b. Filter by duration tolerance
                c. Score by title/artist similarity
                d. Sort by score (verified results get bonus)
             4. Return best match or failure result
+        
+        ISRC Search "Failure" Definition:
+            The ISRC search is considered to have "failed" (triggering text
+            search fallback) in any of these cases:
+            - Zero results returned from the YouTube Music API
+            - Results returned but none pass the duration filter
+            - Results pass duration filter but none exceed MIN_SIMILARITY_SCORE
+            Note: API exceptions trigger retry logic with exponential backoff.
+            After MAX_SEARCH_RETRIES failed attempts, the search fails.
         
         Logging:
             - DEBUG: Search queries and result counts
@@ -208,16 +285,116 @@ class YouTubeMatcher:
         
         Thread Safety:
             This method is thread-safe. Multiple threads can call it
-            simultaneously for different tracks.
+            simultaneously for different tracks. The ytmusicapi client
+            is stateless for searches, and database operations use locks.
         
         Example:
             result = matcher.match_track(track)
             if result.matched:
-                database.set_youtube_url(playlist_id, track.spotify_id, result.youtube_url)
+                print(f"Matched: {result.youtube_url}")
             else:
-                database.mark_youtube_match_failed(playlist_id, track.spotify_id)
+                print(f"Failed: {result.match_reason}")
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        logger.debug(f"Matching track: {track.artist} - {track.name}")
+        
+        # Try ISRC search first if available
+        if track.isrc:
+            logger.debug(f"Trying ISRC search: {track.isrc}")
+            results = self._search_by_isrc(track.isrc)
+            
+            if results:
+                # Filter by duration
+                filtered = self._filter_by_duration(results, track.duration_ms)
+                
+                if filtered:
+                    # Score and select best match
+                    scored = [(r, self._score_result(r, track)) for r in filtered]
+                    best, alternatives = self._select_best_match(scored, track)
+                    
+                    if best is not None:
+                        best_result, best_score = best
+                        confidence = min(best_score / 100.0, 1.0)
+                        
+                        logger.debug(
+                            f"ISRC match found: {best_result.title} "
+                            f"(score: {best_score:.1f})"
+                        )
+                        
+                        return MatchResult.success(
+                            spotify_id=track.spotify_id,
+                            youtube_result=best_result,
+                            confidence=confidence,
+                            reason=f"ISRC match (score: {best_score:.1f})",
+                            close_alternatives=alternatives
+                        )
+                    else:
+                        logger.debug(
+                            f"ISRC results found but none passed score threshold"
+                        )
+                else:
+                    logger.debug(
+                        f"ISRC results found but none passed duration filter"
+                    )
+            else:
+                logger.debug(f"No ISRC results found")
+        
+        # Fall back to text search
+        search_query = track.search_query
+        logger.debug(f"Trying text search: {search_query}")
+        
+        results = self._search_by_text(search_query)
+        
+        if not results:
+            logger.warning(f"No results found for: {track.artist} - {track.name}")
+            return MatchResult.failure(
+                spotify_id=track.spotify_id,
+                reason=f"No results found for search query: {search_query}"
+            )
+        
+        # Filter by duration
+        filtered = self._filter_by_duration(results, track.duration_ms)
+        
+        if not filtered:
+            logger.warning(
+                f"No results within duration tolerance for: "
+                f"{track.artist} - {track.name}"
+            )
+            return MatchResult.failure(
+                spotify_id=track.spotify_id,
+                reason=f"No results within {DURATION_TOLERANCE_SECONDS}s duration tolerance"
+            )
+        
+        # Score all filtered results
+        scored = [(r, self._score_result(r, track)) for r in filtered]
+        
+        # Select best match
+        best, alternatives = self._select_best_match(scored, track)
+        
+        if best is None:
+            logger.warning(
+                f"No results above minimum score for: "
+                f"{track.artist} - {track.name}"
+            )
+            return MatchResult.failure(
+                spotify_id=track.spotify_id,
+                reason=f"No results above minimum similarity score ({MIN_SIMILARITY_SCORE})"
+            )
+        
+        best_result, best_score = best
+        confidence = min(best_score / 100.0, 1.0)
+        
+        logger.debug(
+            f"Text search match: {best_result.title} by {best_result.author} "
+            f"(score: {best_score:.1f})"
+        )
+        
+        return MatchResult.success(
+            spotify_id=track.spotify_id,
+            youtube_result=best_result,
+            confidence=confidence,
+            reason=f"Text search match (score: {best_score:.1f})",
+            close_alternatives=alternatives
+        )
     
     def match_tracks(
         self,
@@ -246,12 +423,12 @@ class YouTubeMatcher:
             3. As results complete:
                a. Update database (set_youtube_url or mark_failed)
                b. Log progress
+               c. Log close alternatives if present
             4. Wait for all tasks to complete
             5. Return all results
         
         Progress:
             Logs progress updates as matches complete.
-            Uses tqdm progress bar if available.
         
         Database Updates:
             For each track:
@@ -269,7 +446,154 @@ class YouTubeMatcher:
             matched_count = sum(1 for r in results if r.matched)
             print(f"Matched {matched_count}/{len(tracks)} tracks")
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        if not tracks:
+            logger.info("No tracks to match")
+            return []
+        
+        logger.info(f"Matching {len(tracks)} tracks using {num_threads} threads")
+        
+        # Map to store results in original order
+        results_map: dict[str, MatchResult] = {}
+        
+        # Track progress
+        completed = 0
+        matched = 0
+        failed = 0
+        
+        def process_track(track: Track) -> tuple[Track, MatchResult]:
+            """Process a single track and return both track and result."""
+            result = self.match_track(track)
+            return (track, result)
+        
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            # Submit all tasks
+            future_to_track = {
+                executor.submit(process_track, track): track
+                for track in tracks
+            }
+            
+            # Process results as they complete
+            for future in as_completed(future_to_track):
+                track = future_to_track[future]
+                
+                try:
+                    _, result = future.result()
+                    results_map[track.spotify_id] = result
+                    
+                    # Update database
+                    if result.matched:
+                        self._database.set_youtube_url(
+                            playlist_id,
+                            track.spotify_id,
+                            result.youtube_url
+                        )
+                        matched += 1
+                        logger.info(
+                            f"Matched: {track.artist} - {track.name} -> "
+                            f"{result.youtube_url}"
+                        )
+                        
+                        # Log close alternatives if present
+                        if result.has_close_alternatives:
+                            alt_urls = [
+                                (alt.url, score) 
+                                for alt, score in result.close_alternatives
+                            ]
+                            log_match_close_alternatives(
+                                logger=logger,
+                                track_name=track.name,
+                                artist=track.artist,
+                                spotify_url=track.spotify_url,
+                                youtube_url=result.youtube_url,
+                                score=result.confidence * 100,
+                                alternatives=alt_urls,
+                                assigned_number=track.assigned_number
+                            )
+                    else:
+                        self._database.mark_youtube_match_failed(
+                            playlist_id,
+                            track.spotify_id
+                        )
+                        failed += 1
+                        logger.warning(
+                            f"No match: {track.artist} - {track.name} "
+                            f"({result.match_reason})"
+                        )
+                    
+                    completed += 1
+                    if completed % 10 == 0 or completed == len(tracks):
+                        logger.info(
+                            f"Progress: {completed}/{len(tracks)} "
+                            f"(matched: {matched}, failed: {failed})"
+                        )
+                        
+                except Exception as e:
+                    logger.error(
+                        f"Error matching {track.artist} - {track.name}: {e}"
+                    )
+                    # Create failure result for exception
+                    results_map[track.spotify_id] = MatchResult.failure(
+                        spotify_id=track.spotify_id,
+                        reason=f"Exception during matching: {str(e)}"
+                    )
+                    self._database.mark_youtube_match_failed(
+                        playlist_id,
+                        track.spotify_id
+                    )
+                    failed += 1
+                    completed += 1
+        
+        # Build results list in original order
+        results = [results_map[track.spotify_id] for track in tracks]
+        
+        logger.info(
+            f"Matching complete: {matched} matched, {failed} failed "
+            f"out of {len(tracks)} tracks"
+        )
+        
+        return results
+    
+    def _search_with_retry(
+        self, 
+        search_func: callable, 
+        *args, 
+        **kwargs
+    ) -> list[dict[str, Any]]:
+        """
+        Execute a search function with retry logic for transient errors.
+        
+        Args:
+            search_func: The search function to call.
+            *args: Positional arguments for the search function.
+            **kwargs: Keyword arguments for the search function.
+        
+        Returns:
+            List of search results, or empty list if all retries fail.
+        
+        Behavior:
+            Retries up to MAX_SEARCH_RETRIES times with exponential backoff
+            for transient errors (network issues, rate limits, etc.).
+        """
+        last_exception = None
+        
+        for attempt in range(MAX_SEARCH_RETRIES):
+            try:
+                return search_func(*args, **kwargs) or []
+            except Exception as e:
+                last_exception = e
+                if attempt < MAX_SEARCH_RETRIES - 1:
+                    delay = RETRY_DELAY_SECONDS * (2 ** attempt)
+                    logger.debug(
+                        f"Search attempt {attempt + 1} failed: {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    logger.warning(
+                        f"Search failed after {MAX_SEARCH_RETRIES} attempts: {e}"
+                    )
+        
+        return []
     
     def _search_by_isrc(self, isrc: str) -> list[YouTubeResult]:
         """
@@ -290,8 +614,31 @@ class YouTubeMatcher:
             1. Search YouTube Music with ISRC as query
             2. Filter to "songs" only (ISRC should match official releases)
             3. Convert results to YouTubeResult objects
+            4. Retry on transient errors with exponential backoff
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        raw_results = self._search_with_retry(
+            self._ytmusic.search,
+            isrc,
+            filter="songs",
+            ignore_spelling=True,
+            limit=20
+        )
+        
+        results = []
+        for raw in raw_results:
+            # Skip results without video ID or artists
+            if not raw.get("videoId") or not raw.get("artists"):
+                continue
+            
+            try:
+                result = YouTubeResult.from_ytmusic_result(raw)
+                if result.video_id and result.duration_seconds > 0:
+                    results.append(result)
+            except Exception as e:
+                logger.debug(f"Failed to parse ISRC result: {e}")
+                continue
+        
+        return results
     
     def _search_by_text(self, query: str) -> list[YouTubeResult]:
         """
@@ -309,8 +656,38 @@ class YouTubeMatcher:
             2. Search with filter="videos" (user uploads, live versions)
             3. Combine and deduplicate results
             4. Convert to YouTubeResult objects
+            5. Retry on transient errors with exponential backoff
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        all_results = []
+        seen_ids = set()
+        
+        for options in SEARCH_OPTIONS:
+            raw_results = self._search_with_retry(
+                self._ytmusic.search,
+                query,
+                **options
+            )
+            
+            for raw in raw_results:
+                video_id = raw.get("videoId")
+                
+                # Skip duplicates, results without ID, or without artists
+                if not video_id or video_id in seen_ids:
+                    continue
+                if not raw.get("artists"):
+                    continue
+                
+                seen_ids.add(video_id)
+                
+                try:
+                    result = YouTubeResult.from_ytmusic_result(raw)
+                    if result.video_id and result.duration_seconds > 0:
+                        all_results.append(result)
+                except Exception as e:
+                    logger.debug(f"Failed to parse text search result: {e}")
+                    continue
+        
+        return all_results
     
     def _filter_by_duration(
         self,
@@ -332,7 +709,15 @@ class YouTubeMatcher:
             Computes absolute difference between result duration and target.
             Keeps results where difference <= DURATION_TOLERANCE_SECONDS.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        target_seconds = target_duration_ms // 1000
+        
+        filtered = []
+        for result in results:
+            diff = abs(result.duration_seconds - target_seconds)
+            if diff <= DURATION_TOLERANCE_SECONDS:
+                filtered.append(result)
+        
+        return filtered
     
     def _score_result(
         self,
@@ -368,17 +753,7 @@ class YouTubeMatcher:
                - video + unverified: +0 (no bonus)
                See RESULT_TYPE_BONUS constant.
             
-            2. Popularity-Views Correlation (Relative Tiers):
-               Only applied when track.popularity > POPULARITY_HIGH_THRESHOLD (70):
-               - Compute views tier relative to other candidates in the set
-               - High-views tier (top 30%): +VIEWS_BOOST_HIGH_TIER (+5)
-               - Medium/Low tiers: no adjustment
-               This filters spam/re-uploads for popular tracks without
-               discriminating against niche artists.
-               Note: Tier calculation requires the full candidate list,
-               so this is computed in _select_best_match() context.
-            
-            3. Explicit Flag Matching (Asymmetric Penalties):
+            2. Explicit Flag Matching (Asymmetric Penalties):
                Compares track.explicit with result.is_explicit:
                - Both explicit: +3 (perfect match)
                - Both clean: +2 (good match)
@@ -387,7 +762,7 @@ class YouTubeMatcher:
                - Either is None: 0 (insufficient data)
                See EXPLICIT_MATCH_SCORES constant.
             
-            4. Forbidden Words Check:
+            3. Forbidden Words Check:
                If Spotify title contains a keyword from FORBIDDEN_WORDS
                (e.g., "remix", "live", "acoustic") but YouTube title doesn't:
                - Apply FORBIDDEN_WORD_PENALTY (-4)
@@ -395,19 +770,81 @@ class YouTubeMatcher:
         
         Final score = weighted_average(title, artist) + all_bonuses + all_penalties
         
-        Algorithm:
-            This extends spotDL's scoring approach, keeping the core
-            fuzzy matching while adding complementary signals for
-            improved accuracy.
+        Note:
+            Popularity-Views Correlation bonus is applied in _select_best_match()
+            since it requires context about all candidates to compute relative tiers.
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        # Normalize texts for comparison
+        spotify_title = _normalize_text(track.name)
+        youtube_title = _normalize_text(result.title)
+        
+        # Build artist strings for comparison
+        spotify_artist = _normalize_text(track.artist)
+        youtube_artist = _normalize_text(result.author)
+        
+        # Also try matching against all artists
+        spotify_all_artists = _normalize_text(" ".join(track.artists))
+        youtube_all_artists = _normalize_text(" ".join(result.artists)) if result.artists else youtube_artist
+        
+        # Calculate title similarity
+        title_score = fuzz.ratio(spotify_title, youtube_title)
+        
+        # Calculate artist similarity (best of primary or all artists)
+        artist_score_primary = fuzz.ratio(spotify_artist, youtube_artist)
+        artist_score_all = fuzz.ratio(spotify_all_artists, youtube_all_artists)
+        artist_score = max(artist_score_primary, artist_score_all)
+        
+        # Weighted average of title and artist scores
+        base_score = (title_score * TITLE_WEIGHT) + (artist_score * ARTIST_WEIGHT)
+        
+        # Initialize bonus/penalty accumulator
+        adjustments = 0.0
+        
+        # 1. Result Type Priority bonus
+        if result.result_type == "song":
+            if result.is_verified:
+                adjustments += RESULT_TYPE_BONUS["song_verified"]
+            else:
+                adjustments += RESULT_TYPE_BONUS["song_unverified"]
+        else:
+            if result.is_verified:
+                adjustments += RESULT_TYPE_BONUS["video_verified"]
+            else:
+                adjustments += RESULT_TYPE_BONUS["video_unverified"]
+        
+        # 2. Album match bonus
+        if track.album and result.album:
+            spotify_album = _normalize_text(track.album)
+            youtube_album = _normalize_text(result.album)
+            album_similarity = fuzz.ratio(spotify_album, youtube_album)
+            if album_similarity >= 80:
+                adjustments += ALBUM_MATCH_BONUS
+        
+        # 3. Explicit flag matching
+        if track.explicit is not None and result.is_explicit is not None:
+            if track.explicit and result.is_explicit:
+                adjustments += EXPLICIT_MATCH_SCORES["both_explicit"]
+            elif not track.explicit and not result.is_explicit:
+                adjustments += EXPLICIT_MATCH_SCORES["both_clean"]
+            elif track.explicit and not result.is_explicit:
+                adjustments += EXPLICIT_MATCH_SCORES["spotify_explicit_yt_clean"]
+            elif not track.explicit and result.is_explicit:
+                adjustments += EXPLICIT_MATCH_SCORES["spotify_clean_yt_explicit"]
+        
+        # 4. Forbidden words check
+        if _check_forbidden_words(track.name, result.title):
+            adjustments += FORBIDDEN_WORD_PENALTY
+        
+        final_score = base_score + adjustments
+        
+        return final_score
     
     def _select_best_match(
         self,
         candidates: list[tuple[YouTubeResult, float]],
         track: Track,
         min_score: float = MIN_SIMILARITY_SCORE
-    ) -> tuple[YouTubeResult | None, list[tuple[YouTubeResult, float]]]:
+    ) -> tuple[tuple[YouTubeResult, float] | None, list[tuple[YouTubeResult, float]]]:
         """
         Select the best match from scored candidates and identify close alternatives.
         
@@ -422,7 +859,7 @@ class YouTubeMatcher:
         
         Returns:
             Tuple of:
-            - Best YouTubeResult if score >= min_score, None otherwise.
+            - Best (YouTubeResult, score) if score >= min_score, None otherwise.
             - List of (YouTubeResult, score) for alternatives within
               CLOSE_MATCH_THRESHOLD points of the best match.
               Empty list if no close alternatives or no valid match.
@@ -443,22 +880,59 @@ class YouTubeMatcher:
             5. Identify close alternatives (Conflict Resolution):
                Find all other candidates with score difference < CLOSE_MATCH_THRESHOLD
                from the best match. These are returned for logging/review.
-        
-        Tiebreaker Behavior:
-            When close alternatives exist, the caller should log them using
-            log_match_close_alternatives() so users can verify the selection.
-            The message format includes:
-            - The selected track with Spotify URL, YouTube URL, and score
-            - All alternatives with YouTube URL and score
-            - A notice: "Multiple close matches found. Verify if correct."
-        
-        Example:
-            candidates = [(result1, 85.0), (result2, 82.5), (result3, 60.0)]
-            best, alternatives = matcher._select_best_match(candidates, track)
-            # best = result1
-            # alternatives = [(result2, 82.5)]  # within 5 points of 85.0
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        if not candidates:
+            return None, []
+        
+        # Make mutable copy for score adjustments
+        adjusted_candidates = [(r, s) for r, s in candidates]
+        
+        # Apply Popularity-Views Correlation for popular tracks
+        if track.popularity > POPULARITY_HIGH_THRESHOLD:
+            # Get candidates with known view counts
+            candidates_with_views = [
+                (r, s, r.views) for r, s in adjusted_candidates
+                if r.views is not None
+            ]
+            
+            if candidates_with_views:
+                # Sort by views to determine tiers
+                candidates_with_views.sort(key=lambda x: x[2], reverse=True)
+                
+                # Calculate high-views tier threshold (top 30%)
+                high_tier_count = max(1, int(len(candidates_with_views) * VIEWS_TIER_HIGH_PERCENTILE))
+                high_tier_ids = {
+                    c[0].video_id for c in candidates_with_views[:high_tier_count]
+                }
+                
+                # Apply bonus to high-tier candidates
+                adjusted_candidates = [
+                    (r, s + VIEWS_BOOST_HIGH_TIER if r.video_id in high_tier_ids else s)
+                    for r, s in adjusted_candidates
+                ]
+        
+        # Filter by minimum score
+        valid_candidates = [
+            (r, s) for r, s in adjusted_candidates if s >= min_score
+        ]
+        
+        if not valid_candidates:
+            return None, []
+        
+        # Sort by score (descending)
+        valid_candidates.sort(key=lambda x: x[1], reverse=True)
+        
+        # Best match
+        best = valid_candidates[0]
+        best_result, best_score = best
+        
+        # Find close alternatives
+        close_alternatives = []
+        for r, s in valid_candidates[1:]:
+            if best_score - s <= CLOSE_MATCH_THRESHOLD:
+                close_alternatives.append((r, s))
+        
+        return best, close_alternatives
 
 
 def match_tracks_phase2(

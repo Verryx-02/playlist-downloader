@@ -13,6 +13,7 @@ Exception Hierarchy:
         YouTubeError - YouTube matching/download issues
         DownloadError - Audio download issues
         MetadataError - Metadata embedding issues
+        LyricsError - Lyrics fetching issues
 """
 
 
@@ -239,22 +240,18 @@ class LyricsError(SpotDownloaderError):
     should never prevent the track from being saved.
     
     Common causes:
-        - Lyrics not found on any provider
-        - Provider blocked the request (anti-bot)
-        - Provider website structure changed (scraping broken)
-        - Network timeout
-    
-    Note:
-        Lyrics fetching is inherently fragile due to reliance on web scraping.
-        This error should be logged but never propagated to stop execution.
+        - No lyrics found for the track
+        - Lyrics provider API error
+        - Network connectivity issues
+        - Rate limiting from lyrics provider
     
     Example:
         raise LyricsError(
-            "Lyrics not found on any provider",
+            "No lyrics found for track",
             details={
                 'track_name': 'Song Title',
                 'artist': 'Artist Name',
-                'providers_tried': ['genius', 'azlyrics', 'musixmatch']
+                'providers_tried': ['syncedlyrics', 'genius']
             }
         )
     """

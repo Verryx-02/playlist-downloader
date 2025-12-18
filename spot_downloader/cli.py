@@ -88,7 +88,7 @@ from spot_downloader.spotify import (
     fetch_playlist_phase1,
 )
 from spot_downloader.utils import ensure_directory, extract_playlist_id
-from spot_downloader.youtube import match_tracks_phase2
+from spot_downloader.youtube import match_tracks_phase2, get_tracks_needing_match
 
 logger = get_logger(__name__)
 
@@ -153,6 +153,11 @@ __version__ = "0.1.0"
     help="Path to cookies.txt for YouTube Music Premium quality."
 )
 @click.option(
+    "--force-rematch",
+    is_flag=True,
+    help="Reset failed YouTube matches and retry matching in PHASE 2."
+)
+@click.option(
     "--version",
     is_flag=True,
     help="Show version and exit."
@@ -170,6 +175,7 @@ def cli(
     phase5_only: bool,
     replace: Optional[tuple[Path, str]],
     cookie_file: Optional[Path],
+    force_rematch: bool,
     version: bool
 ) -> None:
     """
@@ -195,8 +201,13 @@ def cli(
         _handle_replace(replace, cookie_file)
         ctx.exit(0)
     
-    # Validate: must have --url or --liked for any operation
-    if not url and not liked:
+    # Phase flags
+    phase_flags = [phase1_only, phase2_only, phase3_only, phase4_only, phase5_only]
+    has_phase_flag = any(phase_flags)
+    
+    # Validate: show help only if no meaningful arguments
+    # Phases 2-5 can run without --url/--liked (they use database)
+    if not url and not liked and not has_phase_flag:
         # No arguments at all - show help
         click.echo(ctx.get_help())
         ctx.exit(0)
@@ -212,9 +223,12 @@ def cli(
         )
     
     # Phase flags are mutually exclusive
-    phase_flags = [phase1_only, phase2_only, phase3_only, phase4_only, phase5_only]
     if sum(phase_flags) > 1:
         raise click.UsageError("Only one phase flag (--1, --2, --3, --4, --5) can be used")
+    
+    # --1 requires --url or --liked
+    if phase1_only and not url and not liked:
+        raise click.UsageError("--1 requires --url or --liked")
     
     # --url can only be used with --1 (or when running all phases)
     if url and any([phase2_only, phase3_only, phase4_only, phase5_only]):
@@ -229,7 +243,7 @@ def cli(
         raise click.UsageError("--sync can only be used with --1 or when running all phases")
     
     # Determine which phases to run
-    if any(phase_flags):
+    if has_phase_flag:
         # Single phase mode
         run_phase1 = phase1_only
         run_phase2 = phase2_only
@@ -255,6 +269,7 @@ def cli(
     ctx.obj["run_phase4"] = run_phase4
     ctx.obj["run_phase5"] = run_phase5
     ctx.obj["cookie_file"] = cookie_file
+    ctx.obj["force_rematch"] = force_rematch
     ctx.obj["user_auth"] = liked  # True if --liked, False otherwise
     
     # Run the download workflow
@@ -330,7 +345,8 @@ def _run_download(options: dict) -> None:
                 database=database,
                 playlist_id=playlist_id,
                 tracks=tracks,
-                num_threads=config.download.threads
+                num_threads=config.download.threads,
+                force_rematch=options["force_rematch"]
             )
         
         if options["run_phase3"]:
@@ -494,7 +510,8 @@ def _run_phase2(
     database: Database,
     playlist_id: str,
     tracks: list[Track] | None,
-    num_threads: int
+    num_threads: int,
+    force_rematch: bool = False
 ) -> None:
     """
     Run PHASE 2: Match tracks on YouTube Music.
@@ -504,14 +521,80 @@ def _run_phase2(
         playlist_id: Playlist ID for database queries.
         tracks: Tracks from PHASE 1 (None if running phase separately).
         num_threads: Number of parallel matching threads.
+        force_rematch: If True, reset failed matches before processing.
     
     Behavior:
         1. Log phase start
-        2. Get tracks needing match from database (if tracks is None)
-        3. Run matcher with threading
-        4. Log match statistics
+        2. If force_rematch, reset failed matches in database
+        3. If tracks is None, get tracks needing match from database
+           and convert from dict to Track objects
+        4. Run matcher with threading
+        5. Log match statistics
+    
+    Type Conversion:
+        When tracks is None (running phase 2 separately), tracks are
+        retrieved from the database as list[dict[str, Any]]. These are
+        converted to list[Track] using Track.from_database_dict() before
+        passing to the matcher.
     """
-    raise NotImplementedError("Contract only - implementation pending")
+    logger.info("=" * 60)
+    logger.info("PHASE 2: Matching tracks on YouTube Music")
+    logger.info("=" * 60)
+    
+    # Handle force_rematch: reset failed matches to allow re-processing
+    if force_rematch:
+        reset_count = database.reset_failed_matches(playlist_id)
+        if reset_count > 0:
+            logger.info(f"Reset {reset_count} failed matches for re-matching")
+    
+    # Get tracks to process
+    if tracks is None:
+        # Running phase 2 separately - get tracks from database
+        track_dicts = get_tracks_needing_match(database, playlist_id)
+        
+        if not track_dicts:
+            logger.info("No tracks need YouTube matching")
+            logger.info("PHASE 2 complete")
+            return
+        
+        # Convert dict to Track objects using from_database_dict
+        tracks = [
+            Track.from_database_dict(d["track_id"], d)
+            for d in track_dicts
+        ]
+        logger.info(f"Found {len(tracks)} tracks needing match in database")
+    else:
+        # Tracks from phase 1 - filter to only those needing match
+        # (in case some were already matched in a previous run)
+        existing_matched = set()
+        for t in tracks:
+            track_data = database.get_track(playlist_id, t.spotify_id)
+            if track_data and track_data.get("youtube_url"):
+                existing_matched.add(t.spotify_id)
+        
+        if existing_matched:
+            tracks = [t for t in tracks if t.spotify_id not in existing_matched]
+            logger.info(f"Skipping {len(existing_matched)} already matched tracks")
+    
+    if not tracks:
+        logger.info("No tracks to match")
+        logger.info("PHASE 2 complete")
+        return
+    
+    logger.info(f"Matching {len(tracks)} tracks using {num_threads} threads")
+    
+    # Run matching
+    results = match_tracks_phase2(database, tracks, playlist_id, num_threads)
+    
+    # Log summary statistics
+    matched = sum(1 for r in results if r.matched)
+    failed = len(results) - matched
+    
+    logger.info("-" * 40)
+    logger.info(f"Matched: {matched}/{len(results)} tracks")
+    if failed > 0:
+        logger.info(f"Failed:  {failed} tracks (see log for details)")
+    logger.info("PHASE 2 complete")
 
 
 def _run_phase3(

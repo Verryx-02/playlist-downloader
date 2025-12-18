@@ -890,6 +890,55 @@ class Database:
                     )
                 conn.commit()
     
+    def reset_failed_matches(self, playlist_id: str) -> int:
+        """
+        Reset all failed YouTube matches for a playlist to allow re-matching.
+        
+        This method sets youtube_url back to NULL for all tracks that were
+        previously marked as YOUTUBE_MATCH_FAILED. This allows the matching
+        process to retry these tracks.
+        
+        Args:
+            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
+        
+        Returns:
+            Number of tracks that were reset.
+        
+        Raises:
+            DatabaseError: If playlist doesn't exist.
+        
+        Thread Safety:
+            Acquires _lock for the entire operation.
+        
+        Use Case:
+            Called when user runs with --force-rematch flag to retry
+            tracks that previously failed to match. This is useful when:
+            - YouTube Music catalog has been updated
+            - User wants to try with different network conditions
+            - Previous failures were due to transient issues
+        
+        Example:
+            reset_count = database.reset_failed_matches(playlist_id)
+            print(f"Reset {reset_count} failed matches for re-matching")
+        """
+        with self._lock:
+            with self._get_connection() as conn:
+                db_id = self._get_playlist_db_id(conn, playlist_id)
+                if db_id is None:
+                    raise DatabaseError(
+                        f"Playlist not found: {playlist_id}",
+                        details={"playlist_id": playlist_id}
+                    )
+                
+                cursor = conn.execute(
+                    "UPDATE tracks SET youtube_url = NULL WHERE playlist_id = ? AND youtube_url = ?",
+                    (db_id, YOUTUBE_MATCH_FAILED)
+                )
+                reset_count = cursor.rowcount
+                conn.commit()
+                
+                return reset_count
+    
     # =========================================================================
     # Liked Songs Operations
     # =========================================================================

@@ -13,6 +13,40 @@ from dataclasses import dataclass
 from typing import Any
 
 
+def _parse_duration(duration_str: str | None) -> int:
+    """
+    Parse duration string to seconds.
+    
+    Args:
+        duration_str: Duration in format "M:SS" or "H:MM:SS" or None.
+    
+    Returns:
+        Duration in seconds, or 0 if parsing fails.
+    
+    Examples:
+        "3:33" -> 213
+        "1:02:15" -> 3735
+        None -> 0
+    """
+    if not duration_str:
+        return 0
+    
+    try:
+        parts = duration_str.split(":")
+        if len(parts) == 2:
+            # M:SS format
+            minutes, seconds = int(parts[0]), int(parts[1])
+            return minutes * 60 + seconds
+        elif len(parts) == 3:
+            # H:MM:SS format
+            hours, minutes, seconds = int(parts[0]), int(parts[1]), int(parts[2])
+            return hours * 3600 + minutes * 60 + seconds
+        else:
+            return 0
+    except (ValueError, TypeError):
+        return 0
+
+
 @dataclass(frozen=True)
 class YouTubeResult:
     """
@@ -110,7 +144,92 @@ class YouTubeResult:
             - Songs: https://music.youtube.com/watch?v={id}
             - Videos: https://www.youtube.com/watch?v={id}
         """
-        raise NotImplementedError("Contract only - implementation pending")
+        # Extract video ID
+        video_id = result.get("videoId", "")
+        
+        # Determine result type and build URL
+        result_type = result.get("resultType", "video")
+        if result_type == "song":
+            url = f"https://music.youtube.com/watch?v={video_id}"
+        else:
+            url = f"https://www.youtube.com/watch?v={video_id}"
+        
+        # Extract title
+        title = result.get("title", "")
+        
+        # Extract artists - ytmusicapi returns list of dicts with "name" key
+        artists_data = result.get("artists", [])
+        if artists_data and isinstance(artists_data, list):
+            artists = tuple(
+                a.get("name", "") for a in artists_data 
+                if isinstance(a, dict) and a.get("name")
+            )
+            # First artist is the primary author
+            author = artists[0] if artists else ""
+        else:
+            artists = ()
+            author = ""
+        
+        # Parse duration string to seconds
+        duration_str = result.get("duration")
+        duration_seconds = _parse_duration(duration_str)
+        
+        # Also check duration_seconds field if present (some results have it directly)
+        if duration_seconds == 0 and "duration_seconds" in result:
+            try:
+                duration_seconds = int(result["duration_seconds"])
+            except (ValueError, TypeError):
+                pass
+        
+        # Determine if verified (songs from YouTube Music are considered verified)
+        is_verified = result_type == "song"
+        
+        # Extract album info
+        album_data = result.get("album")
+        album = None
+        if album_data:
+            if isinstance(album_data, dict):
+                album = album_data.get("name")
+            elif isinstance(album_data, str):
+                album = album_data
+        
+        # Extract explicit flag
+        is_explicit = result.get("isExplicit")
+        
+        # Extract view count
+        views = None
+        views_data = result.get("views")
+        if views_data:
+            if isinstance(views_data, int):
+                views = views_data
+            elif isinstance(views_data, str):
+                # Parse view count strings like "1.5M views"
+                try:
+                    views_str = views_data.lower().replace(",", "").replace(" views", "").strip()
+                    if "b" in views_str:
+                        views = int(float(views_str.replace("b", "")) * 1_000_000_000)
+                    elif "m" in views_str:
+                        views = int(float(views_str.replace("m", "")) * 1_000_000)
+                    elif "k" in views_str:
+                        views = int(float(views_str.replace("k", "")) * 1_000)
+                    else:
+                        views = int(views_str)
+                except (ValueError, TypeError):
+                    views = None
+        
+        return cls(
+            video_id=video_id,
+            url=url,
+            title=title,
+            author=author,
+            duration_seconds=duration_seconds,
+            is_verified=is_verified,
+            artists=artists,
+            album=album,
+            is_explicit=is_explicit,
+            views=views,
+            result_type=result_type
+        )
     
     @property
     def duration_ms(self) -> int:
