@@ -138,9 +138,10 @@ EXPLICIT_MATCH_SCORES = {
 # Album match bonus
 ALBUM_MATCH_BONUS = 5
 
-# Forbidden Word Penalty
-# Applied when Spotify has a keyword (e.g., "remix") but YouTube doesn't
-FORBIDDEN_WORD_PENALTY = -4
+# Forbidden Word Penalty (per word, matches spotDL)
+# Applied when YouTube has a keyword (e.g., "acoustic", "instrumental") that Spotify doesn't
+# SpotDL applies -15 for EACH forbidden word found
+FORBIDDEN_WORD_PENALTY = 15
 
 # Close Match Threshold for Tiebreaker
 # When multiple results have scores within this range, log alternatives
@@ -167,24 +168,35 @@ def _normalize_text(text: str) -> str:
     return text.lower().strip()
 
 
-def _check_forbidden_words(spotify_title: str, youtube_title: str) -> bool:
+def _check_forbidden_words(spotify_title: str, youtube_title: str) -> list[str]:
     """
-    Check if Spotify title contains a forbidden word that YouTube title lacks.
+    Check if YouTube title contains forbidden words that Spotify title lacks.
+    
+    This mirrors spotDL's check_forbidden_words() function. It detects when
+    YouTube has alternative version indicators (acoustic, instrumental, etc.)
+    that the Spotify track doesn't have, indicating a potential mismatch.
     
     Args:
         spotify_title: The Spotify track title.
         youtube_title: The YouTube result title.
     
     Returns:
-        True if Spotify has a forbidden word that YouTube lacks (penalty should apply).
+        List of forbidden words found in YouTube but not in Spotify.
+        Empty list if no mismatches found.
+    
+    Example:
+        # Spotify: "Playing God" vs YouTube: "Playing God (Acoustic)"
+        # Returns: ["acoustic"]
     """
     spotify_lower = spotify_title.lower()
     youtube_lower = youtube_title.lower()
     
+    found_words = []
     for word in FORBIDDEN_WORDS:
-        if word in spotify_lower and word not in youtube_lower:
-            return True
-    return False
+        if word in youtube_lower and word not in spotify_lower:
+            found_words.append(word)
+    
+    return found_words
 
 
 class YouTubeMatcher:
@@ -495,18 +507,23 @@ class YouTubeMatcher:
                         
                         # Log close alternatives if present
                         if result.has_close_alternatives:
-                            alt_urls = [
-                                (alt.url, score) 
+                            # Build alternatives list with titles
+                            alternatives_with_titles = [
+                                (alt.title, alt.url, score) 
                                 for alt, score in result.close_alternatives
                             ]
+                            # Get selected YouTube title
+                            selected_title = result.youtube_result.title if result.youtube_result else ""
+                            
                             log_match_close_alternatives(
                                 logger=logger,
                                 track_name=track.name,
                                 artist=track.artist,
                                 spotify_url=track.spotify_url,
                                 youtube_url=result.youtube_url,
+                                youtube_title=selected_title,
                                 score=result.confidence * 100,
-                                alternatives=alt_urls,
+                                alternatives=alternatives_with_titles,
                                 assigned_number=track.assigned_number
                             )
                     else:
@@ -762,11 +779,13 @@ class YouTubeMatcher:
                - Either is None: 0 (insufficient data)
                See EXPLICIT_MATCH_SCORES constant.
             
-            3. Forbidden Words Check:
-               If Spotify title contains a keyword from FORBIDDEN_WORDS
-               (e.g., "remix", "live", "acoustic") but YouTube title doesn't:
-               - Apply FORBIDDEN_WORD_PENALTY (-4)
-               This prevents matching "Song (Remix)" to the original version.
+            3. Forbidden Words Check (spotDL style):
+               If YouTube title contains a keyword from FORBIDDEN_WORDS
+               (e.g., "acoustic", "instrumental", "live") but Spotify title doesn't:
+               - Apply -15 penalty PER WORD found
+               This prevents matching original songs to alternate versions.
+               Example: "Playing God" on Spotify should not match "Playing God (Acoustic)"
+               on YouTube, which would get -15 penalty.
         
         Final score = weighted_average(title, artist) + all_bonuses + all_penalties
         
@@ -831,9 +850,11 @@ class YouTubeMatcher:
             elif not track.explicit and result.is_explicit:
                 adjustments += EXPLICIT_MATCH_SCORES["spotify_clean_yt_explicit"]
         
-        # 4. Forbidden words check
-        if _check_forbidden_words(track.name, result.title):
-            adjustments += FORBIDDEN_WORD_PENALTY
+        # 4. Forbidden words check (spotDL style)
+        # Check if YouTube has forbidden words that Spotify doesn't have
+        forbidden_words_found = _check_forbidden_words(track.name, result.title)
+        for _ in forbidden_words_found:
+            adjustments -= FORBIDDEN_WORD_PENALTY  # -15 per word
         
         final_score = base_score + adjustments
         

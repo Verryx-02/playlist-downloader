@@ -361,20 +361,21 @@ class MatchCloseAlternativesHandler(logging.Handler):
     human-readable format for user verification:
     
         42-Song Title-Artist Name.m4a
-        Spotify: https://open.spotify.com/track/xxxxx
-        Selected: https://music.youtube.com/watch?v=yyyyy (score: 87.5)
+        Spotify: Song Title https://open.spotify.com/track/xxxxx
+        Selected: Song Title (Official Audio) https://music.youtube.com/watch?v=yyyyy (score: 87.5)
         Alternatives:
-          - https://music.youtube.com/watch?v=zzzzz (score: 85.2)
-          - https://www.youtube.com/watch?v=wwwww (score: 83.1)
+          - Song Title (Acoustic) https://music.youtube.com/watch?v=zzzzz (score: 85.2)
+          - Song Title (Live) https://www.youtube.com/watch?v=wwwww (score: 83.1)
         Multiple close matches found. Verify if correct.
         
     The handler looks for specific extra fields in log records:
-        - 'match_alt_track_name': The name of the track
-        - 'match_alt_track_artist': The artist name
+        - 'match_alt_track_name': The name of the track (Spotify)
+        - 'match_alt_track_artist': The artist name (Spotify)
         - 'match_alt_spotify_url': The Spotify URL
         - 'match_alt_youtube_url': The selected YouTube URL
+        - 'match_alt_youtube_title': The title of the selected YouTube match
         - 'match_alt_score': The score of the selected match
-        - 'match_alt_alternatives': List of (url, score) tuples for alternatives
+        - 'match_alt_alternatives': List of (title, url, score) tuples for alternatives
         - 'match_alt_track_number': The assigned track number (optional)
     
     Only records containing these fields are written to the report.
@@ -391,10 +392,11 @@ class MatchCloseAlternativesHandler(logging.Handler):
                 'match_alt_track_artist': 'Artist Name',
                 'match_alt_spotify_url': 'https://open.spotify.com/track/xxx',
                 'match_alt_youtube_url': 'https://music.youtube.com/watch?v=yyy',
+                'match_alt_youtube_title': 'Song Title (Official Audio)',
                 'match_alt_score': 87.5,
                 'match_alt_alternatives': [
-                    ('https://music.youtube.com/watch?v=zzz', 85.2),
-                    ('https://www.youtube.com/watch?v=www', 83.1),
+                    ('Song Title (Acoustic)', 'https://music.youtube.com/watch?v=zzz', 85.2),
+                    ('Song Title (Live)', 'https://www.youtube.com/watch?v=www', 83.1),
                 ],
                 'match_alt_track_number': 42
             }
@@ -460,6 +462,7 @@ class MatchCloseAlternativesHandler(logging.Handler):
             artist = getattr(record, "match_alt_track_artist", "Unknown")
             spotify_url = getattr(record, "match_alt_spotify_url", "")
             youtube_url = getattr(record, "match_alt_youtube_url", "")
+            youtube_title = getattr(record, "match_alt_youtube_title", "")
             score = getattr(record, "match_alt_score", 0.0)
             alternatives = getattr(record, "match_alt_alternatives", [])
             number = getattr(record, "match_alt_track_number", None)
@@ -472,13 +475,13 @@ class MatchCloseAlternativesHandler(logging.Handler):
             
             # Write entry
             self.report_file.write(f"{filename}\n")
-            self.report_file.write(f"Spotify: {spotify_url}\n")
-            self.report_file.write(f"Selected: {youtube_url} (score: {score:.1f})\n")
+            self.report_file.write(f"Spotify: {track_name} {spotify_url}\n")
+            self.report_file.write(f"Selected: {youtube_title} {youtube_url} (score: {score:.1f})\n")
             
             if alternatives:
                 self.report_file.write("Alternatives:\n")
-                for alt_url, alt_score in alternatives:
-                    self.report_file.write(f"  - {alt_url} (score: {alt_score:.1f})\n")
+                for alt_title, alt_url, alt_score in alternatives:
+                    self.report_file.write(f"  - {alt_title} {alt_url} (score: {alt_score:.1f})\n")
             
             self.report_file.write("Multiple close matches found. Verify if correct.\n\n")
             self.report_file.flush()
@@ -777,8 +780,9 @@ def log_match_close_alternatives(
     artist: str,
     spotify_url: str,
     youtube_url: str,
+    youtube_title: str,
     score: float,
-    alternatives: list[tuple[str, float]],
+    alternatives: list[tuple[str, str, float]],
     assigned_number: int | None = None
 ) -> None:
     """
@@ -792,12 +796,13 @@ def log_match_close_alternatives(
     
     Args:
         logger: The logger to use for the message.
-        track_name: The name of the track.
-        artist: The artist name.
+        track_name: The name of the track (Spotify).
+        artist: The artist name (Spotify).
         spotify_url: The Spotify URL for the track.
         youtube_url: The YouTube URL of the selected match.
+        youtube_title: The title of the selected YouTube match.
         score: The score of the selected match.
-        alternatives: List of (youtube_url, score) tuples for close alternatives.
+        alternatives: List of (youtube_title, youtube_url, score) tuples for close alternatives.
                      These are matches within CLOSE_MATCH_THRESHOLD of the best.
         assigned_number: Track number for filename display.
     
@@ -817,21 +822,22 @@ def log_match_close_alternatives(
             artist="Artist Name",
             spotify_url="https://open.spotify.com/track/xxx",
             youtube_url="https://music.youtube.com/watch?v=yyy",
+            youtube_title="Song Title (Official Audio)",
             score=87.5,
             alternatives=[
-                ("https://music.youtube.com/watch?v=zzz", 85.2),
-                ("https://www.youtube.com/watch?v=www", 83.1),
+                ("Song Title (Acoustic)", "https://music.youtube.com/watch?v=zzz", 85.2),
+                ("Song Title (Live)", "https://www.youtube.com/watch?v=www", 83.1),
             ],
             assigned_number=42
         )
         
         # This will write to match_close_alternatives.log:
         # 42-Song Title-Artist Name.m4a
-        # Spotify: https://open.spotify.com/track/xxx
-        # Selected: https://music.youtube.com/watch?v=yyy (score: 87.5)
+        # Spotify: Song Title https://open.spotify.com/track/xxx
+        # Selected: Song Title (Official Audio) https://music.youtube.com/watch?v=yyy (score: 87.5)
         # Alternatives:
-        #   - https://music.youtube.com/watch?v=zzz (score: 85.2)
-        #   - https://www.youtube.com/watch?v=www (score: 83.1)
+        #   - Song Title (Acoustic) https://music.youtube.com/watch?v=zzz (score: 85.2)
+        #   - Song Title (Live) https://www.youtube.com/watch?v=www (score: 83.1)
         # Multiple close matches found. Verify if correct.
     """
     logger.warning(
@@ -841,6 +847,7 @@ def log_match_close_alternatives(
             "match_alt_track_artist": artist,
             "match_alt_spotify_url": spotify_url,
             "match_alt_youtube_url": youtube_url,
+            "match_alt_youtube_title": youtube_title,
             "match_alt_score": score,
             "match_alt_alternatives": alternatives,
             "match_alt_track_number": assigned_number,
