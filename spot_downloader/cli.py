@@ -412,10 +412,10 @@ def _load_configuration() -> Config:
 
 def _initialize_database(output_dir: Path) -> Database:
     """
-    Initialize the JSON database.
+    Initialize the SQLite database.
     
     Args:
-        output_dir: Directory where database.json is stored.
+        output_dir: Directory where database.db is stored.
     
     Returns:
         Database instance.
@@ -423,7 +423,7 @@ def _initialize_database(output_dir: Path) -> Database:
     Raises:
         DatabaseError: If database cannot be initialized.
     """
-    db_path = output_dir / "database.json"
+    db_path = output_dir / "database.db"
     return Database(db_path)
 
 

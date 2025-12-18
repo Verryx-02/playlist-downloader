@@ -8,7 +8,7 @@ and to distinguish between different failure modes.
 Exception Hierarchy:
     SpotDownloaderError (base)
         ConfigError - Configuration file issues
-        DatabaseError - JSON database issues
+        DatabaseError - SQLite database issues
         SpotifyError - Spotify API issues
         YouTubeError - YouTube matching/download issues
         DownloadError - Audio download issues
@@ -81,12 +81,12 @@ class ConfigError(SpotDownloaderError):
 
 class DatabaseError(SpotDownloaderError):
     """
-    Raised when there's an issue with the JSON database.
+    Raised when there's an issue with the SQLite database.
     
     This is a CRITICAL error that should stop program execution.
     
     Common causes:
-        - database.json is corrupted (invalid JSON)
+        - database.db is corrupted
         - Permission denied when reading/writing
         - Disk full
         - Schema validation failed (unexpected structure)
@@ -96,8 +96,8 @@ class DatabaseError(SpotDownloaderError):
     
     Example:
         raise DatabaseError(
-            "Database file corrupted: invalid JSON syntax",
-            details={'file_path': '/path/to/database.json', 'line': 42}
+            "Database file corrupted",
+            details={'file_path': '/path/to/database.db'}
         )
     """
     pass
