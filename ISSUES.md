@@ -209,3 +209,23 @@ spot --url <url-2> --1
 spot --2
 
 The --2 will only be applied to songs in the playlist with url <url-2>.
+
+
+
+## 9. 96% correct matching rate is not 100%
+
+**Status:** Thinking | **Priority:** Very low 
+
+### The Problem
+
+The most challenging part of the entire project is matching a Spotify song to the same song on YouTube.
+The most serious problem is the risk of matching a Spotify song with an inappropriate song.
+This is why the --replace flag exists.
+The user searches for the correct YouTube link and informs the database that it is the correct song.
+But this means that all users will have to use --replace, thereby benefiting themselves but not other users, who would need it.
+
+### My Solution
+
+Every time a user runs --replace, they are asked if they want to share the replace with the community.
+If so, the central system will know that the song is an exception and must be handled differently.
+Every time, before downloading a song, the system will check whether that song is in the exceptions database. If so, it will download from the YouTube link in that database; otherwise, it will proceed with normal operation.
