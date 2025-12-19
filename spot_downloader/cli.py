@@ -94,7 +94,7 @@ logger = get_logger(__name__)
 
 
 # Version string
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 @click.group(invoke_without_command=True)
