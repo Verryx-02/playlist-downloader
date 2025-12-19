@@ -1,6 +1,5 @@
-# spot_downloader
+![Banner](banner.png)
 
-Download Spotify playlists via YouTube Music in M4A format with full metadata.
 
 ## Overview
 
