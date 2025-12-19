@@ -188,9 +188,24 @@ Sometimes during Phase 2 (YouTube Music matching), a non-blocking error occurs. 
 
 ## 8. Removals and moves of songs in Spotify playlists not managed
 
-**Status:** Under investigation | **Priority:** Medium because I don't remove or move songs from my playlists.
+**Status:** Under investigation | **Priority:** Medium because I don't remove or move songs from my playlists but someone does
 
 ### The Problem
 
 Someone could decide to remove a song from a playlist. In 
 in this case a data consistency problem would be created in the database
+
+
+
+## 8. --2 applies only on last --1
+
+**Status:** Under investigation | **Priority:** Medium 
+
+### The Problem
+
+If you run it in this order:
+spot --url <url-1> --1
+spot --url <url-2> --1
+spot --2
+
+The --2 will only be applied to songs in the playlist with url <url-2>.
