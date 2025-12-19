@@ -262,10 +262,9 @@ The following metadata is embedded in each M4A file:
 - Without cookies, YouTube limits quality to 128 kbps
 - Use `--cookie-file` with YouTube Premium cookies for 256 kbps
 
-## License
-
-MIT License - see LICENSE file for details.
+## License: 
+[MIT](LICENSE)
 
 ## Acknowledgments
 
-This project is inspired by [spotDL](https://github.com/spotDL/spotify-downloader) and uses his matching algorithms for YouTube Music search.
+This project is inspired by [spotDL](https://github.com/spotDL/spotify-downloader). It uses and improves its matching algorithm for music searches on YouTube.
