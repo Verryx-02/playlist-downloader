@@ -182,3 +182,15 @@ Run 2: Creates log_errors_2024-12-19_15-22-13.log
 ### The Problem
 
 Sometimes during Phase 2 (YouTube Music matching), a non-blocking error occurs. It doesn't crash the program, but I haven't been able to track down exactly what it is or when it happens. 
+
+
+---
+
+## 8. Removals and moves of songs in Spotify playlists not managed
+
+**Status:** Under investigation | **Priority:** Medium because I don't remove or move songs from my playlists.
+
+### The Problem
+
+Someone could decide to remove a song from a playlist. In 
+in this case a data consistency problem would be created in the database

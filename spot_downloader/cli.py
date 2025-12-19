@@ -93,7 +93,7 @@ from spot_downloader.youtube import match_tracks_phase2, get_tracks_needing_matc
 logger = get_logger(__name__)
 
 
-# Version string
+# Version string (if updated, update also in config.toml)
 __version__ = "0.2.0"
 
 
