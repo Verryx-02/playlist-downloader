@@ -477,6 +477,7 @@ class SpotifyFetcher:
             playlist_id: Playlist ID (or LIKED_SONGS_KEY for liked songs).
         
         Behavior:
+            - Deduplicates tracks by spotify_id (keeps first occurrence)
             - Converts each Track to database format
             - Uses batch add for efficiency
             - Preserves existing youtube_url and downloaded status
@@ -484,12 +485,31 @@ class SpotifyFetcher:
         if not tracks:
             return
         
-        batch_data: list[tuple[str, dict[str, Any]]] = []
+        # Deduplicate tracks by spotify_id (keep first occurrence)
+        seen_ids: set[str] = set()
+        unique_tracks: list[Track] = []
+        duplicate_count = 0
+        
         for track in tracks:
+            if track.spotify_id not in seen_ids:
+                seen_ids.add(track.spotify_id)
+                unique_tracks.append(track)
+            else:
+                duplicate_count += 1
+        
+        if duplicate_count > 0:
+            logger.warning(
+                f"Skipped {duplicate_count} duplicate tracks in playlist "
+                f"(same song added multiple times)"
+            )
+        
+        # Build batch data from unique tracks
+        batch_data: list[tuple[str, dict[str, Any]]] = []
+        for track in unique_tracks:
             batch_data.append((track.spotify_id, track.to_database_dict()))
         
         self._database.add_tracks_batch(playlist_id, batch_data)
-        logger.debug(f"Stored {len(tracks)} tracks in database")
+        logger.debug(f"Stored {len(unique_tracks)} tracks in database")
     
     @staticmethod
     def _is_valid_track(track_item: dict[str, Any] | None) -> bool:
