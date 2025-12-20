@@ -314,17 +314,16 @@ def _run_download(options: dict) -> None:
         
         # Determine playlist ID
         # Phase 1 requires --url or --liked explicitly
-        # Phases 2-5 can work from database if no --url/--liked provided
+        # Phases 2-5 can work without playlist_id (process all playlists)
         if options["liked"]:
             playlist_id = LIKED_SONGS_KEY
         elif options["url"]:
             playlist_id = extract_playlist_id(options["url"])
         else:
-            # Running phase 2-5 without --url: get from database
-            playlist_id = database.get_active_playlist_id()
-            if playlist_id is None:
-                click.echo("No playlist found in database. Run with --url first.", err=True)
-                sys.exit(1)
+            # Running phase 2-5 without --url: playlist_id is None
+            # Phase 2 will process ALL playlists
+            # Phases 3-5 still need a specific playlist (use active one)
+            playlist_id = None
         
         # Override cookie file from CLI if provided
         cookie_file = options["cookie_file"] or config.download.cookie_file
@@ -348,6 +347,14 @@ def _run_download(options: dict) -> None:
                 num_threads=config.download.threads,
                 force_rematch=options["force_rematch"]
             )
+        
+        # Phases 3-5 require a specific playlist
+        # If playlist_id is None, get the active one
+        if playlist_id is None and any([options["run_phase3"], options["run_phase4"], options["run_phase5"]]):
+            playlist_id = database.get_active_playlist_id()
+            if playlist_id is None:
+                click.echo("No playlist found in database. Run with --url first.", err=True)
+                sys.exit(1)
         
         if options["run_phase3"]:
             _run_phase3(
@@ -373,8 +380,9 @@ def _run_download(options: dict) -> None:
                 num_threads=config.download.threads
             )
         
-        # Final statistics
-        _print_final_stats(database, playlist_id)
+        # Final statistics (only if we have a specific playlist)
+        if playlist_id is not None:
+            _print_final_stats(database, playlist_id)
         
         logger.info("spot-downloader completed successfully")
         
@@ -411,7 +419,6 @@ def _run_download(options: dict) -> None:
         
     finally:
         shutdown_logging()
-
 
 def _load_configuration() -> Config:
     """
@@ -508,7 +515,7 @@ def _run_phase1(
 
 def _run_phase2(
     database: Database,
-    playlist_id: str,
+    playlist_id: str | None,
     tracks: list[Track] | None,
     num_threads: int,
     force_rematch: bool = False
@@ -518,7 +525,8 @@ def _run_phase2(
     
     Args:
         database: Database instance.
-        playlist_id: Playlist ID for database queries.
+        playlist_id: Playlist ID for database queries. If None, processes
+                     ALL playlists that have unmatched tracks.
         tracks: Tracks from PHASE 1 (None if running phase separately).
         num_threads: Number of parallel matching threads.
         force_rematch: If True, reset failed matches before processing.
@@ -528,8 +536,9 @@ def _run_phase2(
         2. If force_rematch, reset failed matches in database
         3. If tracks is None, get tracks needing match from database
            and convert from dict to Track objects
-        4. Run matcher with threading
-        5. Log match statistics
+        4. If playlist_id is None, group tracks by playlist and process each
+        5. Run matcher with threading
+        6. Log match statistics
     
     Type Conversion:
         When tracks is None (running phase 2 separately), tracks are
@@ -543,9 +552,14 @@ def _run_phase2(
     
     # Handle force_rematch: reset failed matches to allow re-processing
     if force_rematch:
-        reset_count = database.reset_failed_matches(playlist_id)
-        if reset_count > 0:
-            logger.info(f"Reset {reset_count} failed matches for re-matching")
+        if playlist_id is not None:
+            reset_count = database.reset_failed_matches(playlist_id)
+            if reset_count > 0:
+                logger.info(f"Reset {reset_count} failed matches for re-matching")
+        else:
+            # Reset for all playlists - would need a new method
+            # For now, skip this when processing all playlists
+            logger.warning("--force-rematch with all playlists not yet supported")
     
     # Get tracks to process
     if tracks is None:
@@ -557,6 +571,52 @@ def _run_phase2(
             logger.info("PHASE 2 complete")
             return
         
+        # Check if we're processing multiple playlists
+        if playlist_id is None:
+            # Group tracks by playlist
+            from collections import defaultdict
+            tracks_by_playlist: dict[str, list[dict]] = defaultdict(list)
+            for d in track_dicts:
+                tracks_by_playlist[d["playlist_id"]].append(d)
+            
+            playlist_count = len(tracks_by_playlist)
+            total_tracks = len(track_dicts)
+            logger.info(f"Found {total_tracks} tracks needing match across {playlist_count} playlists")
+            
+            # Process each playlist
+            total_matched = 0
+            total_failed = 0
+            
+            for pl_id, pl_track_dicts in tracks_by_playlist.items():
+                playlist_info = database.get_playlist_info(pl_id)
+                playlist_name = playlist_info["name"] if playlist_info else pl_id
+                logger.info(f"Processing playlist: {playlist_name} ({len(pl_track_dicts)} tracks)")
+                
+                # Convert dict to Track objects
+                pl_tracks = [
+                    Track.from_database_dict(d["track_id"], d)
+                    for d in pl_track_dicts
+                ]
+                
+                # Run matching for this playlist
+                results = match_tracks_phase2(database, pl_tracks, pl_id, num_threads)
+                
+                matched = sum(1 for r in results if r.matched)
+                failed = len(results) - matched
+                total_matched += matched
+                total_failed += failed
+                
+                logger.info(f"  Matched: {matched}/{len(results)}")
+            
+            # Final summary
+            logger.info("-" * 40)
+            logger.info(f"Total matched: {total_matched}/{total_tracks} tracks")
+            if total_failed > 0:
+                logger.info(f"Total failed:  {total_failed} tracks (see log for details)")
+            logger.info("PHASE 2 complete")
+            return
+        
+        # Single playlist mode
         # Convert dict to Track objects using from_database_dict
         tracks = [
             Track.from_database_dict(d["track_id"], d)

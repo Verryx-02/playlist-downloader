@@ -266,6 +266,36 @@ class Database:
         """Get current UTC time as ISO format string."""
         return datetime.now(timezone.utc).isoformat()
     
+    def get_all_tracks_needing_match(self) -> list[dict[str, Any]]:
+        """
+        Get all tracks from ALL playlists that need YouTube matching.
+        
+        Returns:
+            List of track data dicts where:
+            - youtube_url is NULL (not yet matched)
+            - youtube_url is NOT 'MATCH_FAILED' (already failed)
+            Each dict includes 'track_id' and 'playlist_id' keys.
+        
+        Thread Safety:
+            Acquires _lock and returns copies of track data.
+        """
+        with self._lock:
+            with self._get_connection() as conn:
+                cursor = conn.execute("""
+                    SELECT t.*, p.spotify_id as playlist_spotify_id 
+                    FROM tracks t
+                    JOIN playlists p ON t.playlist_id = p.id
+                    WHERE t.youtube_url IS NULL
+                """)
+                
+                result = []
+                for row in cursor.fetchall():
+                    track = self._row_to_track_data(row)
+                    track["track_id"] = row["spotify_id"]
+                    track["playlist_id"] = row["playlist_spotify_id"]
+                    result.append(track)
+                return result
+            
     def _get_playlist_db_id(self, conn: sqlite3.Connection, spotify_id: str) -> int | None:
         """
         Get internal database ID for a playlist by its Spotify ID.

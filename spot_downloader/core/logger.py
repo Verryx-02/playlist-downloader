@@ -29,6 +29,7 @@ import logging
 import sys
 from pathlib import Path
 from typing import TextIO
+from datetime import datetime
 
 from tqdm import tqdm
 
@@ -536,50 +537,33 @@ def setup_logging(output_dir: Path) -> None:
     
     Args:
         output_dir: Directory where log files will be created.
-                    The directory will be created if it doesn't exist.
+                    Logs are stored in a 'logs' subdirectory.
     
     Behavior:
-        1. Create output_dir if it doesn't exist
-        2. Configure root logger level to DEBUG
-        3. Create and configure console handler (TqdmLoggingHandler)
+        1. Create output_dir/logs if it doesn't exist
+        2. Generate timestamp for this run's log files
+        3. Configure root logger level to DEBUG
+        4. Create and configure console handler (TqdmLoggingHandler)
            - Level: INFO
            - Format: Compact (no timestamp)
-        4. Create and configure full log file handler
-           - Path: output_dir/log_full.log
+        5. Create and configure full log file handler
+           - Path: output_dir/logs/log_full_{timestamp}.log
            - Level: DEBUG
            - Format: Full with timestamp
-        5. Create and configure error log file handler
-           - Path: output_dir/log_errors.log
+        6. Create and configure error log file handler
+           - Path: output_dir/logs/log_errors_{timestamp}.log
            - Level: DEBUG (filtered to ERROR+ by ErrorOnlyFilter)
            - Format: Full with timestamp
-        6. Create and configure download failed track handler
-           - Path: output_dir/download_failures.log
-           - Listens for these extra fields in log records:
-             * download_failed_track_name: str - Track title
-             * download_failed_track_artist: str - Artist name
-             * download_failed_track_url: str - Spotify URL
-             * download_failed_track_number: int | None - Assigned number
-        7. Create and configure lyrics failed track handler
-           - Path: output_dir/lyrics_failures.log
-           - Listens for these extra fields in log records:
-             * lyrics_failed_track_name: str - Track title
-             * lyrics_failed_track_artist: str - Artist name
-             * lyrics_failed_track_url: str - Spotify URL
-             * lyrics_failed_track_number: int | None - Assigned number
-        8. Create and configure match close alternatives handler
-           - Path: output_dir/match_close_alternatives.log
-           - Listens for these extra fields in log records:
-             * match_alt_track_name: str - Track title
-             * match_alt_track_artist: str - Artist name
-             * match_alt_spotify_url: str - Spotify URL
-             * match_alt_youtube_url: str - Selected YouTube URL
-             * match_alt_score: float - Score of selected match
-             * match_alt_alternatives: list[tuple[str, float]] - Alternative URLs and scores
-             * match_alt_track_number: int | None - Assigned number
-        9. Add all handlers to root logger
+        7. Create and configure download failed track handler
+           - Path: output_dir/logs/download_failures_{timestamp}.log
+        8. Create and configure lyrics failed track handler
+           - Path: output_dir/logs/lyrics_failures_{timestamp}.log
+        9. Create and configure match close alternatives handler
+           - Path: output_dir/logs/match_close_alternatives_{timestamp}.log
+        10. Add all handlers to root logger
     
     File Handling:
-        - All log files are opened in write mode (overwrite existing)
+        - Each run creates new log files with unique timestamps
         - Files use UTF-8 encoding
         - Files are closed automatically on program exit
     
@@ -592,8 +576,12 @@ def setup_logging(output_dir: Path) -> None:
         log_lyrics_failure(): Helper to log with correct extra fields
         log_match_close_alternatives(): Helper to log match alternatives
     """
-    # Create output directory if needed
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Create logs subdirectory
+    logs_dir = output_dir / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Generate timestamp for this run
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     
     # Get root logger
     root_logger = logging.getLogger()
@@ -609,14 +597,14 @@ def setup_logging(output_dir: Path) -> None:
     root_logger.addHandler(console_handler)
     
     # Full log file handler
-    full_log_path = output_dir / LOG_FULL_FILENAME
+    full_log_path = logs_dir / f"log_full_{timestamp}.log"
     full_handler = logging.FileHandler(full_log_path, mode="w", encoding="utf-8")
     full_handler.setLevel(logging.DEBUG)
     full_handler.setFormatter(logging.Formatter(FILE_LOG_FORMAT, FILE_DATE_FORMAT))
     root_logger.addHandler(full_handler)
     
     # Error-only log file handler
-    error_log_path = output_dir / LOG_ERRORS_FILENAME
+    error_log_path = logs_dir / f"log_errors_{timestamp}.log"
     error_handler = logging.FileHandler(error_log_path, mode="w", encoding="utf-8")
     error_handler.setLevel(logging.DEBUG)  # Filter handles the level restriction
     error_handler.setFormatter(logging.Formatter(FILE_LOG_FORMAT, FILE_DATE_FORMAT))
@@ -624,19 +612,19 @@ def setup_logging(output_dir: Path) -> None:
     root_logger.addHandler(error_handler)
     
     # Download failures handler
-    download_failures_path = output_dir / DOWNLOAD_FAILURES_FILENAME
+    download_failures_path = logs_dir / f"download_failures_{timestamp}.log"
     download_handler = DownloadFailedTrackHandler(download_failures_path)
     download_handler.open()
     root_logger.addHandler(download_handler)
     
     # Lyrics failures handler
-    lyrics_failures_path = output_dir / LYRICS_FAILURES_FILENAME
+    lyrics_failures_path = logs_dir / f"lyrics_failures_{timestamp}.log"
     lyrics_handler = LyricsFailedTrackHandler(lyrics_failures_path)
     lyrics_handler.open()
     root_logger.addHandler(lyrics_handler)
     
     # Match close alternatives handler
-    match_alt_path = output_dir / MATCH_CLOSE_ALTERNATIVES_FILENAME
+    match_alt_path = logs_dir / f"match_close_alternatives_{timestamp}.log"
     match_alt_handler = MatchCloseAlternativesHandler(match_alt_path)
     match_alt_handler.open()
     root_logger.addHandler(match_alt_handler)

@@ -985,7 +985,10 @@ def match_tracks_phase2(
     return matcher.match_tracks(tracks, playlist_id, num_threads)
 
 
-def get_tracks_needing_match(database: Database, playlist_id: str) -> list[dict[str, Any]]:
+def get_tracks_needing_match(
+    database: Database, 
+    playlist_id: str | None = None
+) -> list[dict[str, Any]]:
     """
     Get tracks from database that need YouTube matching.
     
@@ -994,9 +997,14 @@ def get_tracks_needing_match(database: Database, playlist_id: str) -> list[dict[
     
     Args:
         database: Database instance.
-        playlist_id: Playlist ID to query.
+        playlist_id: Playlist ID to query. If None, returns tracks from
+                     ALL playlists that need matching.
     
     Returns:
         List of track data dicts for tracks with youtube_url=None.
+        Each dict includes 'track_id' key.
+        When playlist_id is None, each dict also includes 'playlist_id'.
     """
+    if playlist_id is None:
+        return database.get_all_tracks_needing_match()
     return database.get_tracks_without_youtube_url(playlist_id)
