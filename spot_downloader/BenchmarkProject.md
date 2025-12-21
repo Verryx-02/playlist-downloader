@@ -1,15 +1,19 @@
 # A comparative benchmark must be created to approximately measure whether matching algorithm A is better than algorithm B.
 
 ## Input:
-`A_input.tsv` and `B_input.tsv`, where each row can be one of the following options:
+`A_input.tsv` and `B_input.tsv`
 
 ### FileA:
+Each row can be only one of the following options:
+
 ```bash
 spotify_id \t A_youtube_url
 spotify_id
 ```
 
 ### FileB:
+Each row can be only one of the following options:
+
 ```bash
 spotify_id \t B_youtube_url
 spotify_id
@@ -19,7 +23,7 @@ Where:
 `spotify_id` is the unique ID of the song on Spotify (see the file `spot_downloader/spotify/models.py`).
 
 ## Output:
-`Output.tsv`, where each row can be one of the following options:
+`Output.tsv`, where each row can be only one of the following options:
 
 ```bash
 spotify_id \t A_youtube_url \t B_youtube_url

@@ -55,6 +55,59 @@ FILE_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 # Log format for console output (compact, tqdm-friendly)
 CONSOLE_LOG_FORMAT = "%(levelname)s: %(message)s"
 
+# ANSI color codes
+class Colors:
+    """ANSI color codes for terminal output."""
+    RESET = "\033[0m"
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    BLUE = "\033[34m"
+    CYAN = "\033[36m"
+    WHITE = "\033[37m"
+    BOLD = "\033[1m"
+
+
+class ColoredConsoleFormatter(logging.Formatter):
+    """
+    Custom formatter that adds colors to console output.
+    
+    Colors:
+        - DEBUG: Blue
+        - INFO: Green
+        - WARNING: Yellow
+        - ERROR: Red
+        - CRITICAL: Bold Red
+    """
+    
+    LEVEL_COLORS = {
+        logging.DEBUG: Colors.BLUE,
+        logging.INFO: Colors.GREEN,
+        logging.WARNING: Colors.YELLOW,
+        logging.ERROR: Colors.RED,
+        logging.CRITICAL: Colors.BOLD + Colors.RED,
+    }
+    
+    def format(self, record: logging.LogRecord) -> str:
+        """
+        Format the log record with colors.
+        
+        Args:
+            record: The log record to format.
+        
+        Returns:
+            Formatted string with ANSI color codes.
+        """
+        # Get color for this level
+        color = self.LEVEL_COLORS.get(record.levelno, Colors.WHITE)
+        
+        # Format the level name with color
+        colored_levelname = f"{color}{record.levelname}{Colors.RESET}"
+        
+        # Build the message
+        message = f"{colored_levelname}: {record.getMessage()}"
+        
+        return message
 
 class TqdmLoggingHandler(logging.Handler):
     """
@@ -590,10 +643,10 @@ def setup_logging(output_dir: Path) -> None:
     # Remove any existing handlers
     root_logger.handlers.clear()
     
-    # Console handler (tqdm-compatible)
+    # Console handler (tqdm-compatible) with colors
     console_handler = TqdmLoggingHandler()
     console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(logging.Formatter(CONSOLE_LOG_FORMAT))
+    console_handler.setFormatter(ColoredConsoleFormatter())
     root_logger.addHandler(console_handler)
     
     # Full log file handler
@@ -658,6 +711,82 @@ def get_logger(name: str) -> logging.Logger:
         first during application startup.
     """
     return logging.getLogger(name)
+
+def format_matched_message(artist: str, name: str, url: str) -> str:
+    """
+    Format a 'Matched' message with colors.
+    
+    Args:
+        artist: Artist name.
+        name: Track name.
+        url: YouTube URL.
+    
+    Returns:
+        Colored message string.
+    """
+    return (
+        f"{Colors.GREEN}Matched{Colors.RESET}: "
+        f"{artist} - {name} -> "
+        f"{Colors.CYAN}{url}{Colors.RESET}"
+    )
+
+
+def format_close_matches_message(name: str, artist: str, score: float) -> str:
+    """
+    Format a 'Multiple close matches' warning message with colors.
+    
+    Args:
+        name: Track name.
+        artist: Artist name.
+        score: Selected match score.
+    
+    Returns:
+        Colored message string.
+    """
+    return (
+        f"{Colors.YELLOW}Multiple close matches{Colors.RESET} for: "
+        f"{artist} - {name} "
+        f"(selected score: {Colors.YELLOW}{score:.1f}{Colors.RESET})"
+    )
+
+
+def format_no_match_message(artist: str, name: str, reason: str) -> str:
+    """
+    Format a 'No match' error message with colors.
+    
+    Args:
+        artist: Artist name.
+        name: Track name.
+        reason: Failure reason.
+    
+    Returns:
+        Colored message string.
+    """
+    return (
+        f"{Colors.RED}No match{Colors.RESET}: "
+        f"{artist} - {name} "
+        f"({reason})"
+    )
+
+
+def format_progress_message(completed: int, total: int, matched: int, failed: int) -> str:
+    """
+    Format a progress message.
+    
+    Args:
+        completed: Number of completed tracks.
+        total: Total number of tracks.
+        matched: Number of matched tracks.
+        failed: Number of failed tracks.
+    
+    Returns:
+        Formatted message string.
+    """
+    return (
+        f"Progress: {completed}/{total} "
+        f"(matched: {Colors.GREEN}{matched}{Colors.RESET}, "
+        f"failed: {Colors.RED}{failed}{Colors.RESET})"
+    )
 
 
 def log_download_failure(

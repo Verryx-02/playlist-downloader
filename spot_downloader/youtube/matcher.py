@@ -48,6 +48,15 @@ from spot_downloader.core.logger import get_logger, log_match_close_alternatives
 from spot_downloader.spotify.models import Track
 from spot_downloader.youtube.models import MatchResult, YouTubeResult
 
+from spot_downloader.core.logger import (
+    get_logger, 
+    log_match_close_alternatives,
+    format_matched_message,
+    format_close_matches_message,
+    format_no_match_message,
+    format_progress_message,
+)
+
 logger = get_logger(__name__)
 
 
@@ -501,8 +510,11 @@ class YouTubeMatcher:
                         )
                         matched += 1
                         logger.info(
-                            f"Matched: {track.artist} - {track.name} -> "
-                            f"{result.youtube_url}"
+                            format_matched_message(
+                                track.artist, 
+                                track.name, 
+                                result.youtube_url
+                            )
                         )
                         
                         # Log close alternatives if present
@@ -515,6 +527,16 @@ class YouTubeMatcher:
                             # Get selected YouTube title
                             selected_title = result.youtube_result.title if result.youtube_result else ""
                             
+                            # Log warning to console
+                            logger.warning(
+                                format_close_matches_message(
+                                    track.name,
+                                    track.artist,
+                                    result.confidence * 100
+                                )
+                            )
+                            
+                            # Log to file
                             log_match_close_alternatives(
                                 logger=logger,
                                 track_name=track.name,
@@ -532,16 +554,23 @@ class YouTubeMatcher:
                             track.spotify_id
                         )
                         failed += 1
-                        logger.warning(
-                            f"No match: {track.artist} - {track.name} "
-                            f"({result.match_reason})"
+                        logger.error(
+                            format_no_match_message(
+                                track.artist,
+                                track.name,
+                                result.match_reason
+                            )
                         )
                     
                     completed += 1
                     if completed % 10 == 0 or completed == len(tracks):
                         logger.info(
-                            f"Progress: {completed}/{len(tracks)} "
-                            f"(matched: {matched}, failed: {failed})"
+                            format_progress_message(
+                                completed, 
+                                len(tracks), 
+                                matched, 
+                                failed
+                            )
                         )
                         
                 except Exception as e:
@@ -606,7 +635,7 @@ class YouTubeMatcher:
                     )
                     time.sleep(delay)
                 else:
-                    logger.warning(
+                    logger.error(
                         f"Search failed after {MAX_SEARCH_RETRIES} attempts: {e}"
                     )
         
@@ -960,7 +989,7 @@ def match_tracks_phase2(
     database: Database,
     tracks: list[Track],
     playlist_id: str,
-    num_threads: int = 4
+    num_threads: int = 8
 ) -> list[MatchResult]:
     """
     Convenience function for PHASE 2 track matching.
