@@ -253,9 +253,8 @@ The following metadata is embedded in each M4A file:
 
 
 ## Demo
-You can see a demo of spot-downloader in action in this video /Asset/Demo_phase1_2.mov
+You can see a demo of spot-downloader in action in [this video](/Asset/Demo_phase1_2.mov) 
 
-<video controls src="Demo_phase1_2.mov" title="Title"></video>
 
 ## Troubleshooting
 
