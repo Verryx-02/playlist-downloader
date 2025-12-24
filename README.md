@@ -1,4 +1,4 @@
-![Banner](banner.png)
+![Banner](/Asset/banner.png)
 
 
 ## Overview
@@ -250,6 +250,12 @@ The following metadata is embedded in each M4A file:
 | syncedlyrics | Timestamped lyrics |
 | requests | HTTP requests |
 | beautifulsoup4 | HTML parsing |
+
+
+## Demo
+You can see a demo of spot-downloader in action in this video /Asset/Demo_phase1_2.mov
+
+<video controls src="Demo_phase1_2.mov" title="Title"></video>
 
 ## Troubleshooting
 
