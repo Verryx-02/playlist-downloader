@@ -14,7 +14,7 @@ Matching Algorithm:
     6. Return best match or None if no suitable match found
 
 PHASE 2 Workflow:
-    1. Get tracks without YouTube URL from database
+    1. Get tracks without YouTube URL from Global Track Registry
     2. For each track, search YouTube Music
     3. Apply matching algorithm to find best result
     4. Store YouTube URL in database (or mark as failed)
@@ -253,7 +253,7 @@ class YouTubeMatcher:
             print(f"Found: {result.youtube_url}")
         
         # Match multiple tracks with threading
-        results = matcher.match_tracks(tracks, playlist_id, num_threads=4)
+        results = matcher.match_tracks(tracks, num_threads=4)
     """
     
     def __init__(self, database: Database) -> None:
@@ -292,32 +292,10 @@ class YouTubeMatcher:
                d. Sort by score (verified results get bonus)
             4. Return best match or failure result
         
-        ISRC Search "Failure" Definition:
-            The ISRC search is considered to have "failed" (triggering text
-            search fallback) in any of these cases:
-            - Zero results returned from the YouTube Music API
-            - Results returned but none pass the duration filter
-            - Results pass duration filter but none exceed MIN_SIMILARITY_SCORE
-            Note: API exceptions trigger retry logic with exponential backoff.
-            After MAX_SEARCH_RETRIES failed attempts, the search fails.
-        
-        Logging:
-            - DEBUG: Search queries and result counts
-            - DEBUG: Match scores for top candidates
-            - INFO: Successful matches
-            - WARNING: Failed matches
-        
         Thread Safety:
             This method is thread-safe. Multiple threads can call it
             simultaneously for different tracks. The ytmusicapi client
             is stateless for searches, and database operations use locks.
-        
-        Example:
-            result = matcher.match_track(track)
-            if result.matched:
-                print(f"Matched: {result.youtube_url}")
-            else:
-                print(f"Failed: {result.match_reason}")
         """
         logger.debug(f"Matching track: {track.artist} - {track.name}")
         
@@ -424,16 +402,17 @@ class YouTubeMatcher:
     def match_tracks(
         self,
         tracks: list[Track],
-        playlist_id: str,
         num_threads: int = 4,
         progress_bar: MatchingProgressBar | None = None
     ) -> list[MatchResult]:
         """
         Match multiple tracks using parallel processing.
         
+        Updates the Global Track Registry directly - no playlist_id needed
+        since youtube_url is stored per-track globally.
+        
         Args:
             tracks: List of Track objects to match.
-            playlist_id: Playlist ID for database updates.
             num_threads: Number of parallel threads for matching.
             progress_bar: Optional existing progress bar to use.
                          If None, creates a new one.
@@ -474,10 +453,9 @@ class YouTubeMatcher:
                         _, result = future.result()
                         results_map[track.spotify_id] = result
                         
-                        # Update database and log
+                        # Update Global Track Registry (no playlist_id needed!)
                         if result.matched:
                             self._database.set_youtube_url(
-                                playlist_id,
                                 track.spotify_id,
                                 result.youtube_url
                             )
@@ -527,7 +505,6 @@ class YouTubeMatcher:
                             )
                         else:
                             self._database.mark_youtube_match_failed(
-                                playlist_id,
                                 track.spotify_id
                             )
                             progress_bar.log(
@@ -549,7 +526,6 @@ class YouTubeMatcher:
                             reason=f"Exception during matching: {str(e)}"
                         )
                         self._database.mark_youtube_match_failed(
-                            playlist_id,
                             track.spotify_id
                         )
                         progress_bar.update(matched=False)
@@ -562,30 +538,6 @@ class YouTubeMatcher:
         # Build results list in original order
         return [results_map[track.spotify_id] for track in tracks]
 
-
-    def match_tracks_phase2(
-        database: Database,
-        tracks: list[Track],
-        playlist_id: str,
-        num_threads: int = 4,
-        progress_bar: MatchingProgressBar | None = None
-    ) -> list[MatchResult]:
-        """
-        Convenience function for PHASE 2 track matching.
-        
-        Args:
-            database: Database instance.
-            tracks: List of Track objects from PHASE 1.
-            playlist_id: Playlist ID for database updates.
-            num_threads: Number of parallel matching threads.
-            progress_bar: Optional existing progress bar to use.
-        
-        Returns:
-            List of MatchResult objects.
-        """
-        matcher = YouTubeMatcher(database)
-        return matcher.match_tracks(tracks, playlist_id, num_threads, progress_bar)
-        
     def _search_with_retry(
         self, 
         search_func: callable, 
@@ -602,10 +554,6 @@ class YouTubeMatcher:
         
         Returns:
             List of search results, or empty list if all retries fail.
-        
-        Behavior:
-            Retries up to MAX_SEARCH_RETRIES times with exponential backoff
-            for transient errors (network issues, rate limits, etc.).
         """
         last_exception = None
         
@@ -632,22 +580,11 @@ class YouTubeMatcher:
         """
         Search YouTube Music using ISRC code.
         
-        ISRC (International Standard Recording Code) is a unique
-        identifier for recordings. Searching by ISRC gives the most
-        accurate results when available.
-        
         Args:
-            isrc: The ISRC code (e.g., "GBUM71029604").
+            isrc: International Standard Recording Code.
         
         Returns:
-            List of YouTubeResult objects from the search.
-            Empty list if no results found.
-        
-        Behavior:
-            1. Search YouTube Music with ISRC as query
-            2. Filter to "songs" only (ISRC should match official releases)
-            3. Convert results to YouTubeResult objects
-            4. Retry on transient errors with exponential backoff
+            List of YouTubeResult objects matching the ISRC.
         """
         raw_results = self._search_with_retry(
             self._ytmusic.search,
@@ -677,19 +614,13 @@ class YouTubeMatcher:
         """
         Search YouTube Music using text query.
         
+        Searches both "songs" and "videos" filters to maximize coverage.
+        
         Args:
-            query: Search query string, typically "Artist - Title".
+            query: Search query string (typically "Artist - Title").
         
         Returns:
-            List of YouTubeResult objects from the search.
-            Combines results from both "songs" and "videos" filters.
-        
-        Behavior:
-            1. Search with filter="songs" (official releases)
-            2. Search with filter="videos" (user uploads, live versions)
-            3. Combine and deduplicate results
-            4. Convert to YouTubeResult objects
-            5. Retry on transient errors with exponential backoff
+            Combined list of YouTubeResult objects from all searches.
         """
         all_results = []
         seen_ids = set()
@@ -731,16 +662,11 @@ class YouTubeMatcher:
         Filter results to those within duration tolerance.
         
         Args:
-            results: List of YouTubeResult candidates.
-            target_duration_ms: Target duration from Spotify track (milliseconds).
+            results: List of YouTubeResult objects.
+            target_duration_ms: Target duration in milliseconds.
         
         Returns:
-            Filtered list containing only results within DURATION_TOLERANCE_SECONDS
-            of the target duration.
-        
-        Behavior:
-            Computes absolute difference between result duration and target.
-            Keeps results where difference <= DURATION_TOLERANCE_SECONDS.
+            Filtered list of results within DURATION_TOLERANCE_SECONDS.
         """
         target_seconds = target_duration_ms // 1000
         
@@ -752,62 +678,23 @@ class YouTubeMatcher:
         
         return filtered
     
-    def _score_result(
-        self,
-        result: YouTubeResult,
-        track: Track
-    ) -> float:
+    def _score_result(self, result: YouTubeResult, track: Track) -> float:
         """
-        Score a YouTube result against a Spotify track.
-        
-        Uses fuzzy string matching to compare titles and artists,
-        with bonus/penalty points based on multiple signals.
+        Calculate match score for a YouTube result.
         
         Args:
-            result: YouTubeResult candidate to score.
+            result: YouTubeResult to score.
             track: Spotify Track to match against.
         
         Returns:
-            Score (higher is better match). Base range 0-100, but bonuses
-            and penalties can push it outside this range.
+            Match score (0-100+, can exceed 100 with bonuses).
         
-        Scoring Components (Base - from spotDL):
-            - Title similarity (0-100): Uses rapidfuzz ratio
-            - Artist similarity (0-100): Compares artist strings
-            - Album match bonus (+5): If album names match
-        
-        Scoring Components (Improvements):
-            
-            1. Result Type Priority (replaces simple verification bonus):
-               Based on combination of result_type and is_verified:
-               - song + verified: +7 (official YT Music release)
-               - song + unverified: +5 (YT Music category)
-               - video + verified: +2 (official video)
-               - video + unverified: +0 (no bonus)
-               See RESULT_TYPE_BONUS constant.
-            
-            2. Explicit Flag Matching (Asymmetric Penalties):
-               Compares track.explicit with result.is_explicit:
-               - Both explicit: +3 (perfect match)
-               - Both clean: +2 (good match)
-               - Spotify explicit, YT clean: -5 (likely censored version)
-               - Spotify clean, YT explicit: -2 (possible tagging error)
-               - Either is None: 0 (insufficient data)
-               See EXPLICIT_MATCH_SCORES constant.
-            
-            3. Forbidden Words Check (spotDL style):
-               If YouTube title contains a keyword from FORBIDDEN_WORDS
-               (e.g., "acoustic", "instrumental", "live") but Spotify title doesn't:
-               - Apply -15 penalty PER WORD found
-               This prevents matching original songs to alternate versions.
-               Example: "Playing God" on Spotify should not match "Playing God (Acoustic)"
-               on YouTube, which would get -15 penalty.
-        
-        Final score = weighted_average(title, artist) + all_bonuses + all_penalties
-        
-        Note:
-            Popularity-Views Correlation bonus is applied in _select_best_match()
-            since it requires context about all candidates to compute relative tiers.
+        Scoring Components:
+            1. Base Score (0-100): Weighted average of title and artist similarity
+            2. Result Type Bonus: +7 for verified songs, +5 for unverified songs
+            3. Album Match Bonus: +5 if album names are similar
+            4. Explicit Match: +3 both explicit, +2 both clean, -5/-2 mismatches
+            5. Forbidden Word Penalty: -15 per forbidden word found
         """
         # Normalize texts for comparison
         spotify_title = _normalize_text(track.name)
@@ -890,33 +777,13 @@ class YouTubeMatcher:
         
         Args:
             candidates: List of (YouTubeResult, score) tuples.
-                       Scores should already include base scoring from _score_result().
             track: The Spotify Track being matched (needed for popularity check).
             min_score: Minimum acceptable score (0-100).
         
         Returns:
             Tuple of:
             - Best (YouTubeResult, score) if score >= min_score, None otherwise.
-            - List of (YouTubeResult, score) for alternatives within
-              CLOSE_MATCH_THRESHOLD points of the best match.
-              Empty list if no close alternatives or no valid match.
-        
-        Selection Logic:
-            1. Apply Popularity-Views Correlation:
-               If track.popularity > POPULARITY_HIGH_THRESHOLD:
-               a. Sort candidates by views (descending)
-               b. Identify high-views tier (top 30%)
-               c. Add VIEWS_BOOST_HIGH_TIER to candidates in high tier
-            
-            2. Filter to candidates with score >= min_score
-            
-            3. Sort by final score (descending)
-            
-            4. Select top result as best match
-            
-            5. Identify close alternatives (Conflict Resolution):
-               Find all other candidates with score difference < CLOSE_MATCH_THRESHOLD
-               from the best match. These are returned for logging/review.
+            - List of close alternatives within CLOSE_MATCH_THRESHOLD.
         """
         if not candidates:
             return None, []
@@ -972,10 +839,13 @@ class YouTubeMatcher:
         return best, close_alternatives
 
 
+# =============================================================================
+# Convenience Functions (called by CLI)
+# =============================================================================
+
 def match_tracks_phase2(
     database: Database,
     tracks: list[Track],
-    playlist_id: str,
     num_threads: int = 4,
     progress_bar: MatchingProgressBar | None = None
 ) -> list[MatchResult]:
@@ -985,7 +855,6 @@ def match_tracks_phase2(
     Args:
         database: Database instance.
         tracks: List of Track objects from PHASE 1.
-        playlist_id: Playlist ID for database updates.
         num_threads: Number of parallel matching threads.
         progress_bar: Optional existing progress bar to use.
     
@@ -993,29 +862,21 @@ def match_tracks_phase2(
         List of MatchResult objects.
     """
     matcher = YouTubeMatcher(database)
-    return matcher.match_tracks(tracks, playlist_id, num_threads, progress_bar)
+    return matcher.match_tracks(tracks, num_threads, progress_bar)
 
 
-def get_tracks_needing_match(
-    database: Database, 
-    playlist_id: str | None = None
-) -> list[dict[str, Any]]:
+def get_tracks_needing_match(database: Database) -> list[dict[str, Any]]:
     """
-    Get tracks from database that need YouTube matching.
+    Get tracks from Global Track Registry that need YouTube matching.
     
-    Convenience function for getting tracks to process in PHASE 2
-    when running phases separately.
+    This queries globally - all tracks without youtube_url, regardless
+    of which playlist they belong to.
     
     Args:
         database: Database instance.
-        playlist_id: Playlist ID to query. If None, returns tracks from
-                     ALL playlists that need matching.
     
     Returns:
         List of track data dicts for tracks with youtube_url=None.
-        Each dict includes 'track_id' key.
-        When playlist_id is None, each dict also includes 'playlist_id'.
+        Each dict includes 'track_id' (spotify_id).
     """
-    if playlist_id is None:
-        return database.get_all_tracks_needing_match()
-    return database.get_tracks_without_youtube_url(playlist_id)
+    return database.get_tracks_needing_youtube_match()

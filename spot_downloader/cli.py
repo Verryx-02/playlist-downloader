@@ -523,78 +523,49 @@ def _run_phase2(
     """
     Run PHASE 2: Match tracks on YouTube Music.
     
+    With Global Track Registry, matching is done globally - the same track
+    is only matched once regardless of how many playlists contain it.
+    
     Args:
         database: Database instance.
-        playlist_id: Playlist ID for database queries. If None, processes
-                     ALL playlists that have unmatched tracks.
+        playlist_id: Optional playlist ID for --force-rematch scope.
+                    Not used for actual matching (that's global).
         tracks: Tracks from PHASE 1 (None if running phase separately).
         num_threads: Number of parallel matching threads.
         force_rematch: If True, reset failed matches before processing.
     """
-    from spot_downloader.core.progress import MatchingProgressBar
-    
     logger.info("=" * 60)
     logger.info("PHASE 2: Matching tracks on YouTube Music")
     logger.info("=" * 60)
     
     # Handle force_rematch
     if force_rematch:
-        if playlist_id is not None:
-            reset_count = database.reset_failed_matches(playlist_id)
-            if reset_count > 0:
-                logger.info(f"Reset {reset_count} failed matches for re-matching")
-        else:
-            logger.warning("--force-rematch with all playlists not yet supported")
+        # Reset failed matches (globally or for specific playlist)
+        reset_count = database.reset_failed_matches(playlist_id)
+        if reset_count > 0:
+            logger.info(f"Reset {reset_count} failed matches for re-matching")
     
     # Get tracks to process
     if tracks is None:
-        # Running phase 2 separately - get tracks from database
-        track_dicts = get_tracks_needing_match(database, playlist_id)
+        # Running phase 2 separately - get ALL tracks needing match globally
+        track_dicts = get_tracks_needing_match(database)
         
         if not track_dicts:
             logger.info("No tracks need YouTube matching")
             logger.info("PHASE 2 complete")
             return
         
-        # Check if we're processing multiple playlists
-        if playlist_id is None:
-            # Group tracks by playlist
-            from collections import defaultdict
-            tracks_by_playlist: dict[str, list[dict]] = defaultdict(list)
-            for d in track_dicts:
-                tracks_by_playlist[d["playlist_id"]].append(d)
-            
-            playlist_count = len(tracks_by_playlist)
-            total_tracks = len(track_dicts)
-            logger.info(f"Found {total_tracks} tracks needing match across {playlist_count} playlists")
-            
-            # Create ONE progress bar for ALL tracks
-            with MatchingProgressBar(total=total_tracks, description="Matching") as pbar:
-                # Process each playlist
-                for pl_id, pl_track_dicts in tracks_by_playlist.items():
-                    # Convert dict to Track objects
-                    pl_tracks = [
-                        Track.from_database_dict(d["track_id"], d)
-                        for d in pl_track_dicts
-                    ]
-                    
-                    # Run matching for this playlist, using the shared progress bar
-                    match_tracks_phase2(database, pl_tracks, pl_id, num_threads, pbar)
-            
-            logger.info("PHASE 2 complete")
-            return
-        
-        # Single playlist mode
+        # Convert to Track objects
         tracks = [
             Track.from_database_dict(d["track_id"], d)
             for d in track_dicts
         ]
-        logger.info(f"Found {len(tracks)} tracks needing match in database")
+        logger.info(f"Found {len(tracks)} tracks needing YouTube match")
     else:
         # Tracks from phase 1 - filter to only those needing match
         existing_matched = set()
         for t in tracks:
-            track_data = database.get_track(playlist_id, t.spotify_id)
+            track_data = database.get_global_track(t.spotify_id)
             if track_data and track_data.get("youtube_url"):
                 existing_matched.add(t.spotify_id)
         
@@ -609,8 +580,8 @@ def _run_phase2(
     
     logger.info(f"Matching {len(tracks)} tracks using {num_threads} threads")
     
-    # Run matching (will create its own progress bar)
-    match_tracks_phase2(database, tracks, playlist_id, num_threads)
+    # Run matching (global - no playlist_id needed)
+    match_tracks_phase2(database, tracks, num_threads)
     
     logger.info("PHASE 2 complete")
 

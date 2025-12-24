@@ -1,66 +1,29 @@
 """
 Thread-safe SQLite database for spot-downloader.
 
-This module provides persistent storage for playlist and track state,
-enabling features like:
-    - Resume interrupted downloads
-    - Sync mode (download only new tracks)
-    - Track download status and metadata
-    - Track lyrics fetch status
-    - Track metadata embedding status
+This module uses a Global Track Registry pattern: each unique Spotify track
+is stored once in `global_tracks`, and linked to playlists via `playlist_tracks`.
 
-Database Structure:
-    The database uses SQLite with the following schema:
-    
-    playlists:
-        - id: INTEGER PRIMARY KEY
-        - spotify_id: TEXT UNIQUE (playlist ID or "__liked_songs__")
-        - spotify_url: TEXT
-        - name: TEXT
-        - last_synced: TEXT (ISO format timestamp)
-    
-    tracks:
-        - id: INTEGER PRIMARY KEY
-        - playlist_id: INTEGER (FK to playlists)
-        - spotify_id: TEXT
-        - name, artist, artists, album, duration_ms, spotify_url
-        - youtube_url, downloaded, download_timestamp, file_path
-        - lyrics_fetched, lyrics_text, lyrics_synced, lyrics_source
-        - metadata_embedded, lyrics_embedded
-        - assigned_number, added_at, isrc, cover_url, release_date
-        - track_number, disc_number, year, genres, publisher, copyright
-        - explicit, popularity, preview_url
-        - metadata: TEXT (JSON blob for full Spotify metadata)
+Schema:
+    playlists:          Playlist metadata (id, name, spotify_url, last_synced)
+    global_tracks:      One row per unique spotify_id (metadata + processing state)
+    playlist_tracks:    Junction table (playlist_id, track_id, position, added_at)
 
-Track Fields:
-    lyrics_fetched: bool - True if we attempted to fetch lyrics (success or not)
-    lyrics_text: str|null - The lyrics text, or null if not found
-    lyrics_synced: bool - True if lyrics are in LRC format with timestamps
-    lyrics_source: str|null - Provider name ("synced", "genius", etc.) or null
-    metadata_embedded: bool - True if metadata has been written to the M4A file
-    lyrics_embedded: bool - True if lyrics have been written to the M4A file
-
-Thread Safety:
-    All public methods acquire a threading.Lock before executing.
-    SQLite is configured with WAL mode for better concurrency.
-    
-File Safety:
-    SQLite handles atomic writes internally with journaling.
-    WAL mode provides crash recovery and prevents corruption.
+Benefits:
+    - Same track in N playlists = 1 download, 1 YouTube match, 1 lyrics fetch
+    - --replace updates globally, affecting all playlists automatically
+    - No duplicate files on disk
 
 Usage:
-    from spot_downloader.core.database import Database
-    
     db = Database(output_dir / "database.db")
     
-    # Add tracks from Spotify fetch
-    db.add_playlist(playlist_id, spotify_url, name)
+    # PHASE 1: Add tracks
+    track_db_id = db.get_or_create_global_track(spotify_id, metadata)
+    db.link_track_to_playlist(playlist_id, track_db_id, position=1)
     
-    # Update after YouTube match
-    db.set_youtube_url(playlist_id, track_id, youtube_url)
-    
-    # Mark as downloaded
-    db.mark_downloaded(playlist_id, track_id, file_path)
+    # PHASE 2-5: Process globally
+    for track in db.get_tracks_needing_youtube_match():
+        db.set_youtube_url(track["spotify_id"], youtube_url)
 """
 
 import json
@@ -73,24 +36,16 @@ from typing import Any
 from spot_downloader.core.exceptions import DatabaseError
 
 
-# Current database schema version (for future migrations)
-DATABASE_VERSION = 1
-
-# Special key for liked songs (not a real playlist ID)
+DATABASE_VERSION = 2
 LIKED_SONGS_KEY = "__liked_songs__"
-
-# Special value for youtube_url when match failed (distinguishes from None = not yet matched)
 YOUTUBE_MATCH_FAILED = "MATCH_FAILED"
 
 
-# SQL Schema
 _SCHEMA_SQL = """
--- Schema version tracking
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY
 );
 
--- Playlists (includes liked_songs as spotify_id = "__liked_songs__")
 CREATE TABLE IF NOT EXISTS playlists (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     spotify_id TEXT UNIQUE NOT NULL,
@@ -99,268 +54,172 @@ CREATE TABLE IF NOT EXISTS playlists (
     last_synced TEXT
 );
 
--- Tracks
-CREATE TABLE IF NOT EXISTS tracks (
+CREATE TABLE IF NOT EXISTS global_tracks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    playlist_id INTEGER NOT NULL,
-    spotify_id TEXT NOT NULL,
+    spotify_id TEXT UNIQUE NOT NULL,
+    
+    -- Spotify metadata
     name TEXT,
     artist TEXT,
-    artists TEXT,
+    artists TEXT,  -- JSON array
     album TEXT,
     duration_ms INTEGER,
     spotify_url TEXT,
-    youtube_url TEXT,
-    downloaded INTEGER DEFAULT 0,
-    download_timestamp TEXT,
-    file_path TEXT,
-    lyrics_fetched INTEGER DEFAULT 0,
-    lyrics_text TEXT,
-    lyrics_synced INTEGER DEFAULT 0,
-    lyrics_source TEXT,
-    metadata_embedded INTEGER DEFAULT 0,
-    lyrics_embedded INTEGER DEFAULT 0,
-    assigned_number INTEGER,
-    added_at TEXT,
     isrc TEXT,
     cover_url TEXT,
     release_date TEXT,
     track_number INTEGER,
     disc_number INTEGER,
     year INTEGER,
-    genres TEXT,
+    genres TEXT,  -- JSON array
     publisher TEXT,
     copyright TEXT,
     explicit INTEGER,
     popularity INTEGER,
     preview_url TEXT,
-    metadata TEXT,
-    FOREIGN KEY (playlist_id) REFERENCES playlists(id),
-    UNIQUE(playlist_id, spotify_id)
+    metadata TEXT,  -- JSON blob for full Spotify response
+    
+    -- YouTube matching
+    youtube_url TEXT,
+    match_score REAL,
+    match_timestamp TEXT,
+    
+    -- Download state
+    downloaded INTEGER DEFAULT 0,
+    download_timestamp TEXT,
+    file_path TEXT,
+    
+    -- Lyrics
+    lyrics_fetched INTEGER DEFAULT 0,
+    lyrics_text TEXT,
+    lyrics_synced INTEGER DEFAULT 0,
+    lyrics_source TEXT,
+    
+    -- Metadata embedding
+    metadata_embedded INTEGER DEFAULT 0,
+    lyrics_embedded INTEGER DEFAULT 0,
+    
+    created_at TEXT,
+    updated_at TEXT
 );
 
--- Indexes for common queries
-CREATE INDEX IF NOT EXISTS idx_tracks_playlist ON tracks(playlist_id);
-CREATE INDEX IF NOT EXISTS idx_tracks_youtube_url ON tracks(youtube_url);
-CREATE INDEX IF NOT EXISTS idx_tracks_downloaded ON tracks(downloaded);
-CREATE INDEX IF NOT EXISTS idx_tracks_spotify_id ON tracks(spotify_id);
+CREATE TABLE IF NOT EXISTS playlist_tracks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    playlist_id INTEGER NOT NULL,
+    track_id INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    added_at TEXT,
+    FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
+    FOREIGN KEY (track_id) REFERENCES global_tracks(id) ON DELETE CASCADE,
+    UNIQUE(playlist_id, track_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_global_tracks_spotify_id ON global_tracks(spotify_id);
+CREATE INDEX IF NOT EXISTS idx_global_tracks_youtube_url ON global_tracks(youtube_url);
+CREATE INDEX IF NOT EXISTS idx_global_tracks_downloaded ON global_tracks(downloaded);
+CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist ON playlist_tracks(playlist_id);
+CREATE INDEX IF NOT EXISTS idx_playlist_tracks_track ON playlist_tracks(track_id);
 """
 
 
 class Database:
     """
-    Thread-safe SQLite database for persistent storage.
+    Thread-safe SQLite database with Global Track Registry.
     
-    This class manages all read/write operations to the database.db file,
-    providing a clean interface for storing and retrieving playlist and
-    track information.
-    
-    Attributes:
-        db_path: Path to the database.db file.
-        _lock: Threading lock for thread-safe operations.
-    
-    Thread Safety:
-        All public methods are thread-safe. The internal _lock is acquired
-        before any read or write operation.
-    
-    Persistence:
-        SQLite handles persistence automatically with WAL mode enabled
-        for better concurrency and crash recovery.
-    
-    Example:
-        db = Database(Path("/path/to/database.db"))
-        
-        # Check what tracks need to be downloaded
-        new_tracks = db.get_tracks_without_youtube_url(playlist_id)
-        
-        # After matching
-        db.set_youtube_url(playlist_id, track_id, youtube_url)
-        
-        # After download
-        db.mark_downloaded(playlist_id, track_id, file_path)
+    All public methods acquire self._lock before executing.
     """
     
     def __init__(self, db_path: Path) -> None:
-        """
-        Initialize the database, creating tables if needed.
-        
-        Args:
-            db_path: Path where the database.db file is/will be stored.
-                     Parent directory must exist.
-        
-        Raises:
-            DatabaseError: If the parent directory doesn't exist or
-                          database cannot be initialized.
-        
-        Behavior:
-            1. Store the path and create threading lock
-            2. Create database file if it doesn't exist
-            3. Initialize schema (create tables)
-            4. Enable WAL mode for better concurrency
-            5. Validate/set schema version
-        """
         self.db_path = db_path
         self._lock = threading.Lock()
         
-        # Check parent directory exists
         if not db_path.parent.exists():
             raise DatabaseError(
                 f"Parent directory does not exist: {db_path.parent}",
                 details={"path": str(db_path.parent)}
             )
         
-        # Initialize database
         try:
             self._init_database()
         except sqlite3.Error as e:
             raise DatabaseError(
                 f"Failed to initialize database: {e}",
-                details={"path": str(db_path), "original_error": str(e)}
+                details={"path": str(db_path)}
             ) from e
     
     def _get_connection(self) -> sqlite3.Connection:
-        """
-        Get a SQLite connection with proper settings.
-        
-        Returns:
-            Configured SQLite connection.
-        
-        Note:
-            Creates a new connection each time for thread safety.
-            SQLite connections should not be shared between threads.
-        """
         conn = sqlite3.connect(str(self.db_path), timeout=30.0)
-        conn.row_factory = sqlite3.Row  # Enable dict-like access
+        conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         return conn
     
     def _init_database(self) -> None:
-        """
-        Initialize database schema and settings.
-        
-        Creates tables if they don't exist and sets up WAL mode.
-        """
         with self._get_connection() as conn:
-            # Enable WAL mode for better concurrency
             conn.execute("PRAGMA journal_mode=WAL")
-            
-            # Create schema
             conn.executescript(_SCHEMA_SQL)
             
-            # Check/set version
             cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
             row = cursor.fetchone()
             
             if row is None:
-                conn.execute("INSERT INTO schema_version (version) VALUES (?)", 
-                           (DATABASE_VERSION,))
+                conn.execute("INSERT INTO schema_version (version) VALUES (?)", (DATABASE_VERSION,))
             elif row[0] != DATABASE_VERSION:
                 raise DatabaseError(
                     f"Database version mismatch: expected {DATABASE_VERSION}, got {row[0]}",
                     details={"expected": DATABASE_VERSION, "actual": row[0]}
                 )
-            
             conn.commit()
     
     def _now_iso(self) -> str:
-        """Get current UTC time as ISO format string."""
         return datetime.now(timezone.utc).isoformat()
     
-    def get_all_tracks_needing_match(self) -> list[dict[str, Any]]:
-        """
-        Get all tracks from ALL playlists that need YouTube matching.
-        
-        Returns:
-            List of track data dicts where:
-            - youtube_url is NULL (not yet matched)
-            - youtube_url is NOT 'MATCH_FAILED' (already failed)
-            Each dict includes 'track_id' and 'playlist_id' keys.
-        
-        Thread Safety:
-            Acquires _lock and returns copies of track data.
-        """
-        with self._lock:
-            with self._get_connection() as conn:
-                cursor = conn.execute("""
-                    SELECT t.*, p.spotify_id as playlist_spotify_id 
-                    FROM tracks t
-                    JOIN playlists p ON t.playlist_id = p.id
-                    WHERE t.youtube_url IS NULL
-                """)
-                
-                result = []
-                for row in cursor.fetchall():
-                    track = self._row_to_track_data(row)
-                    track["track_id"] = row["spotify_id"]
-                    track["playlist_id"] = row["playlist_spotify_id"]
-                    result.append(track)
-                return result
-            
     def _get_playlist_db_id(self, conn: sqlite3.Connection, spotify_id: str) -> int | None:
-        """
-        Get internal database ID for a playlist by its Spotify ID.
-        
-        Args:
-            conn: Active database connection.
-            spotify_id: Spotify playlist ID or LIKED_SONGS_KEY.
-        
-        Returns:
-            Internal database ID or None if not found.
-        """
-        cursor = conn.execute(
-            "SELECT id FROM playlists WHERE spotify_id = ?",
-            (spotify_id,)
-        )
+        cursor = conn.execute("SELECT id FROM playlists WHERE spotify_id = ?", (spotify_id,))
         row = cursor.fetchone()
         return row[0] if row else None
+    
+    def _serialize_track_data(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Convert Python types to SQLite-compatible values."""
+        row = dict(data)
+        
+        for field in ["artists", "genres"]:
+            if field in row and isinstance(row[field], (list, tuple)):
+                row[field] = json.dumps(row[field])
+        
+        if "metadata" in row and isinstance(row["metadata"], dict):
+            row["metadata"] = json.dumps(row["metadata"])
+        
+        for field in ["downloaded", "lyrics_fetched", "lyrics_synced", 
+                      "metadata_embedded", "lyrics_embedded", "explicit"]:
+            if field in row and row[field] is not None:
+                row[field] = 1 if row[field] else 0
+        
+        return row
+    
+    def _deserialize_track_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        """Convert SQLite row to Python dict with proper types."""
+        data = dict(row)
+        
+        for field in ["artists", "genres", "metadata"]:
+            if field in data and data[field] is not None:
+                try:
+                    data[field] = json.loads(data[field])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        
+        for field in ["downloaded", "lyrics_fetched", "lyrics_synced",
+                      "metadata_embedded", "lyrics_embedded", "explicit"]:
+            if field in data and data[field] is not None:
+                data[field] = bool(data[field])
+        
+        return data
     
     # =========================================================================
     # Playlist Operations
     # =========================================================================
     
-    def playlist_exists(self, playlist_id: str) -> bool:
-        """
-        Check if a playlist exists in the database.
-        
-        Args:
-            playlist_id: The Spotify playlist ID.
-        
-        Returns:
-            True if the playlist exists, False otherwise.
-        
-        Thread Safety:
-            Acquires _lock for the duration of the check.
-        """
-        with self._lock:
-            with self._get_connection() as conn:
-                cursor = conn.execute(
-                    "SELECT 1 FROM playlists WHERE spotify_id = ?",
-                    (playlist_id,)
-                )
-                return cursor.fetchone() is not None
-    
-    def add_playlist(
-        self,
-        playlist_id: str,
-        spotify_url: str,
-        name: str
-    ) -> None:
-        """
-        Add a new playlist to the database or update existing.
-        
-        Args:
-            playlist_id: The Spotify playlist ID.
-            spotify_url: Full Spotify URL for the playlist.
-            name: Display name of the playlist.
-        
-        Behavior:
-            - If playlist doesn't exist, create new entry
-            - If playlist exists, update name and URL (preserve existing tracks)
-            - Update last_synced timestamp to current UTC time
-        
-        Thread Safety:
-            Acquires _lock for the entire operation.
-        """
+    def add_playlist(self, playlist_id: str, spotify_url: str, name: str) -> None:
+        """Create or update a playlist entry."""
         with self._lock:
             with self._get_connection() as conn:
                 conn.execute("""
@@ -373,50 +232,24 @@ class Database:
                 """, (playlist_id, spotify_url, name, self._now_iso()))
                 conn.commit()
     
-    def get_playlist_track_ids(self, playlist_id: str) -> set[str]:
-        """
-        Get all track IDs currently in a playlist.
-        
-        Args:
-            playlist_id: The Spotify playlist ID.
-        
-        Returns:
-            Set of Spotify track IDs in this playlist.
-            Empty set if playlist doesn't exist.
-        
-        Use Case:
-            Used in sync mode to compare against fresh Spotify fetch
-            and determine which tracks are new.
-        
-        Thread Safety:
-            Acquires _lock for the duration of the read.
-        """
+    def ensure_liked_songs_exists(self) -> None:
+        """Ensure the __liked_songs__ playlist entry exists."""
         with self._lock:
             with self._get_connection() as conn:
-                db_id = self._get_playlist_db_id(conn, playlist_id)
-                if db_id is None:
-                    return set()
-                
-                cursor = conn.execute(
-                    "SELECT spotify_id FROM tracks WHERE playlist_id = ?",
-                    (db_id,)
-                )
-                return {row[0] for row in cursor.fetchall()}
+                conn.execute("""
+                    INSERT INTO playlists (spotify_id, spotify_url, name, last_synced)
+                    VALUES (?, NULL, 'Liked Songs', ?)
+                    ON CONFLICT(spotify_id) DO UPDATE SET last_synced = excluded.last_synced
+                """, (LIKED_SONGS_KEY, self._now_iso()))
+                conn.commit()
+    
+    def playlist_exists(self, playlist_id: str) -> bool:
+        with self._lock:
+            with self._get_connection() as conn:
+                cursor = conn.execute("SELECT 1 FROM playlists WHERE spotify_id = ?", (playlist_id,))
+                return cursor.fetchone() is not None
     
     def get_playlist_info(self, playlist_id: str) -> dict[str, Any] | None:
-        """
-        Get playlist metadata (not including tracks).
-        
-        Args:
-            playlist_id: The Spotify playlist ID.
-        
-        Returns:
-            Dictionary with playlist info, or None if not found.
-            Keys: spotify_url, name, last_synced
-        
-        Thread Safety:
-            Acquires _lock and returns a copy of the data.
-        """
         with self._lock:
             with self._get_connection() as conn:
                 cursor = conn.execute(
@@ -424,965 +257,505 @@ class Database:
                     (playlist_id,)
                 )
                 row = cursor.fetchone()
-                if row is None:
-                    return None
-                return {
-                    "spotify_url": row["spotify_url"],
-                    "name": row["name"],
-                    "last_synced": row["last_synced"]
-                }
+                return dict(row) if row else None
+    
+    def get_all_playlists(self) -> list[dict[str, Any]]:
+        with self._lock:
+            with self._get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT spotify_id, spotify_url, name, last_synced FROM playlists ORDER BY name"
+                )
+                return [dict(row) for row in cursor.fetchall()]
     
     def get_active_playlist_id(self) -> str | None:
-        """
-        Get the most recently synced playlist ID.
-        
-        Used when running phases 2-5 without --url to determine
-        which playlist to process.
-        
-        Returns:
-            The playlist_id with the most recent last_synced timestamp,
-            or None if no playlists exist in the database.
-        
-        Thread Safety:
-            Acquires _lock for the duration of the read.
-        """
+        """Get the most recently synced playlist ID."""
         with self._lock:
             with self._get_connection() as conn:
                 cursor = conn.execute("""
                     SELECT spotify_id FROM playlists 
                     WHERE last_synced IS NOT NULL
-                    ORDER BY last_synced DESC 
-                    LIMIT 1
+                    ORDER BY last_synced DESC LIMIT 1
                 """)
                 row = cursor.fetchone()
                 return row[0] if row else None
     
     # =========================================================================
-    # Track Operations
+    # Global Track Registry
     # =========================================================================
     
-    def _track_data_to_row(self, track_data: dict[str, Any]) -> dict[str, Any]:
+    def get_or_create_global_track(self, spotify_id: str, track_data: dict[str, Any]) -> int:
         """
-        Convert track_data dict to database row values.
+        Get existing global track or create new one. Returns the database ID.
         
-        Handles JSON serialization of complex fields.
+        If track exists, updates metadata but preserves processing state
+        (youtube_url, downloaded, lyrics, etc.).
         """
-        row = dict(track_data)
-        
-        # Serialize list/dict fields to JSON
-        if "artists" in row and isinstance(row["artists"], (list, tuple)):
-            row["artists"] = json.dumps(row["artists"])
-        if "genres" in row and isinstance(row["genres"], (list, tuple)):
-            row["genres"] = json.dumps(row["genres"])
-        if "metadata" in row and isinstance(row["metadata"], dict):
-            row["metadata"] = json.dumps(row["metadata"])
-        
-        # Convert booleans to integers
-        for bool_field in ["downloaded", "lyrics_fetched", "lyrics_synced", 
-                          "metadata_embedded", "lyrics_embedded", "explicit"]:
-            if bool_field in row and row[bool_field] is not None:
-                row[bool_field] = 1 if row[bool_field] else 0
-        
-        return row
+        with self._lock:
+            with self._get_connection() as conn:
+                cursor = conn.execute("SELECT id FROM global_tracks WHERE spotify_id = ?", (spotify_id,))
+                row = cursor.fetchone()
+                
+                if row:
+                    self._update_track_metadata(conn, row[0], track_data)
+                    return row[0]
+                
+                return self._insert_global_track(conn, spotify_id, track_data)
     
-    def _row_to_track_data(self, row: sqlite3.Row) -> dict[str, Any]:
-        """
-        Convert database row to track_data dict.
+    def _insert_global_track(self, conn: sqlite3.Connection, spotify_id: str, track_data: dict[str, Any]) -> int:
+        row = self._serialize_track_data(track_data)
+        now = self._now_iso()
         
-        Handles JSON deserialization and boolean conversion.
-        """
-        data = dict(row)
-        
-        # Deserialize JSON fields
-        for json_field in ["artists", "genres", "metadata"]:
-            if json_field in data and data[json_field] is not None:
-                try:
-                    data[json_field] = json.loads(data[json_field])
-                except (json.JSONDecodeError, TypeError):
-                    pass
-        
-        # Convert integers to booleans
-        for bool_field in ["downloaded", "lyrics_fetched", "lyrics_synced",
-                          "metadata_embedded", "lyrics_embedded", "explicit"]:
-            if bool_field in data and data[bool_field] is not None:
-                data[bool_field] = bool(data[bool_field])
-        
-        return data
+        cursor = conn.execute("""
+            INSERT INTO global_tracks (
+                spotify_id, name, artist, artists, album, duration_ms, spotify_url,
+                isrc, cover_url, release_date, track_number, disc_number, year,
+                genres, publisher, copyright, explicit, popularity, preview_url,
+                metadata, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            spotify_id, row.get("name"), row.get("artist"), row.get("artists"),
+            row.get("album"), row.get("duration_ms"), row.get("spotify_url"),
+            row.get("isrc"), row.get("cover_url"), row.get("release_date"),
+            row.get("track_number"), row.get("disc_number"), row.get("year"),
+            row.get("genres"), row.get("publisher"), row.get("copyright"),
+            row.get("explicit"), row.get("popularity"), row.get("preview_url"),
+            row.get("metadata"), now, now
+        ))
+        conn.commit()
+        return cursor.lastrowid
     
-    def add_track(
-        self,
-        playlist_id: str,
-        track_id: str,
-        track_data: dict[str, Any]
+    def _update_track_metadata(self, conn: sqlite3.Connection, track_id: int, track_data: dict[str, Any]) -> None:
+        """Update Spotify metadata, preserve processing state."""
+        row = self._serialize_track_data(track_data)
+        
+        conn.execute("""
+            UPDATE global_tracks SET
+                name = ?, artist = ?, artists = ?, album = ?, duration_ms = ?,
+                spotify_url = ?, isrc = ?, cover_url = ?, release_date = ?,
+                track_number = ?, disc_number = ?, year = ?, genres = ?,
+                publisher = ?, copyright = ?, explicit = ?, popularity = ?,
+                preview_url = ?, metadata = ?, updated_at = ?
+            WHERE id = ?
+        """, (
+            row.get("name"), row.get("artist"), row.get("artists"), row.get("album"),
+            row.get("duration_ms"), row.get("spotify_url"), row.get("isrc"),
+            row.get("cover_url"), row.get("release_date"), row.get("track_number"),
+            row.get("disc_number"), row.get("year"), row.get("genres"),
+            row.get("publisher"), row.get("copyright"), row.get("explicit"),
+            row.get("popularity"), row.get("preview_url"), row.get("metadata"),
+            self._now_iso(), track_id
+        ))
+        conn.commit()
+    
+    def get_global_track(self, spotify_id: str) -> dict[str, Any] | None:
+        """Get a track by its Spotify ID."""
+        with self._lock:
+            with self._get_connection() as conn:
+                cursor = conn.execute("SELECT * FROM global_tracks WHERE spotify_id = ?", (spotify_id,))
+                row = cursor.fetchone()
+                if row:
+                    data = self._deserialize_track_row(row)
+                    data["track_id"] = row["spotify_id"]  # Convenience alias
+                    return data
+                return None
+    
+    def get_global_track_by_path(self, file_path: str) -> dict[str, Any] | None:
+        """Get a track by its file path (for --replace)."""
+        with self._lock:
+            with self._get_connection() as conn:
+                cursor = conn.execute("SELECT * FROM global_tracks WHERE file_path = ?", (file_path,))
+                row = cursor.fetchone()
+                if row:
+                    data = self._deserialize_track_row(row)
+                    data["track_id"] = row["spotify_id"]
+                    return data
+                return None
+    
+    # =========================================================================
+    # Playlist-Track Links
+    # =========================================================================
+    
+    def link_track_to_playlist(
+        self, 
+        playlist_id: str, 
+        track_db_id: int, 
+        position: int, 
+        added_at: str | None = None
     ) -> None:
         """
-        Add a track to a playlist in the database.
+        Create or update the link between a playlist and a global track.
         
         Args:
-            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
-            track_id: The Spotify track ID.
-            track_data: Dictionary containing track information.
-        
-        Behavior:
-            - If track already exists, update metadata but preserve:
-              youtube_url, downloaded, file_path, download_timestamp,
-              lyrics_fetched, lyrics_text, lyrics_synced, lyrics_source,
-              metadata_embedded, lyrics_embedded
-            - If track is new, add with default values for download fields
-        
-        Raises:
-            DatabaseError: If playlist doesn't exist.
-        
-        Thread Safety:
-            Acquires _lock for the entire operation.
+            playlist_id: Spotify playlist ID (or LIKED_SONGS_KEY)
+            track_db_id: Database ID from get_or_create_global_track()
+            position: Track position in playlist (1-indexed)
+            added_at: ISO timestamp when track was added to playlist
         """
         with self._lock:
             with self._get_connection() as conn:
-                db_id = self._get_playlist_db_id(conn, playlist_id)
-                if db_id is None:
-                    raise DatabaseError(
-                        f"Playlist not found: {playlist_id}",
-                        details={"playlist_id": playlist_id}
-                    )
+                db_playlist_id = self._get_playlist_db_id(conn, playlist_id)
+                if db_playlist_id is None:
+                    raise DatabaseError(f"Playlist not found: {playlist_id}")
                 
-                row = self._track_data_to_row(track_data)
-                
-                # Check if track exists
-                cursor = conn.execute(
-                    "SELECT id FROM tracks WHERE playlist_id = ? AND spotify_id = ?",
-                    (db_id, track_id)
-                )
-                existing = cursor.fetchone()
-                
-                if existing:
-                    # Update metadata, preserve download state
-                    conn.execute("""
-                        UPDATE tracks SET
-                            name = ?, artist = ?, artists = ?, album = ?,
-                            duration_ms = ?, spotify_url = ?, assigned_number = ?,
-                            added_at = ?, isrc = ?, cover_url = ?, release_date = ?,
-                            track_number = ?, disc_number = ?, year = ?, genres = ?,
-                            publisher = ?, copyright = ?, explicit = ?, popularity = ?,
-                            preview_url = ?, metadata = ?
-                        WHERE id = ?
-                    """, (
-                        row.get("name"), row.get("artist"), row.get("artists"),
-                        row.get("album"), row.get("duration_ms"), row.get("spotify_url"),
-                        row.get("assigned_number"), row.get("added_at"), row.get("isrc"),
-                        row.get("cover_url"), row.get("release_date"), row.get("track_number"),
-                        row.get("disc_number"), row.get("year"), row.get("genres"),
-                        row.get("publisher"), row.get("copyright"), row.get("explicit"),
-                        row.get("popularity"), row.get("preview_url"), row.get("metadata"),
-                        existing[0]
-                    ))
-                else:
-                    # Insert new track
-                    conn.execute("""
-                        INSERT INTO tracks (
-                            playlist_id, spotify_id, name, artist, artists, album,
-                            duration_ms, spotify_url, youtube_url, downloaded,
-                            download_timestamp, file_path, lyrics_fetched, lyrics_text,
-                            lyrics_synced, lyrics_source, metadata_embedded, lyrics_embedded,
-                            assigned_number, added_at, isrc, cover_url, release_date,
-                            track_number, disc_number, year, genres, publisher, copyright,
-                            explicit, popularity, preview_url, metadata
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        db_id, track_id, row.get("name"), row.get("artist"),
-                        row.get("artists"), row.get("album"), row.get("duration_ms"),
-                        row.get("spotify_url"), None, 0, None, None, 0, None, 0, None,
-                        0, 0, row.get("assigned_number"), row.get("added_at"),
-                        row.get("isrc"), row.get("cover_url"), row.get("release_date"),
-                        row.get("track_number"), row.get("disc_number"), row.get("year"),
-                        row.get("genres"), row.get("publisher"), row.get("copyright"),
-                        row.get("explicit"), row.get("popularity"), row.get("preview_url"),
-                        row.get("metadata")
-                    ))
-                
+                conn.execute("""
+                    INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(playlist_id, track_id) DO UPDATE SET
+                        position = excluded.position,
+                        added_at = COALESCE(excluded.added_at, playlist_tracks.added_at)
+                """, (db_playlist_id, track_db_id, position, added_at))
                 conn.commit()
     
-    def add_tracks_batch(
-        self,
-        playlist_id: str,
-        tracks: list[tuple[str, dict[str, Any]]]
-    ) -> None:
-        """
-        Add multiple tracks to a playlist in a single operation.
-        
-        Args:
-            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
-            tracks: List of (track_id, track_data) tuples.
-        
-        Behavior:
-            Same as add_track() but batched for efficiency.
-            Uses a single transaction for all inserts/updates.
-        
-        Raises:
-            DatabaseError: If playlist doesn't exist.
-        
-        Thread Safety:
-            Acquires _lock once for the entire batch.
-        """
+    def get_playlist_track_ids(self, playlist_id: str) -> set[str]:
+        """Get all Spotify track IDs in a playlist (for sync mode filtering)."""
         with self._lock:
             with self._get_connection() as conn:
                 db_id = self._get_playlist_db_id(conn, playlist_id)
                 if db_id is None:
-                    raise DatabaseError(
-                        f"Playlist not found: {playlist_id}",
-                        details={"playlist_id": playlist_id}
-                    )
+                    return set()
                 
-                # Get existing tracks
-                cursor = conn.execute(
-                    "SELECT spotify_id, id FROM tracks WHERE playlist_id = ?",
-                    (db_id,)
-                )
-                existing_tracks = {row[0]: row[1] for row in cursor.fetchall()}
-                
-                for track_id, track_data in tracks:
-                    row = self._track_data_to_row(track_data)
-                    
-                    if track_id in existing_tracks:
-                        # Update metadata, preserve download state
-                        conn.execute("""
-                            UPDATE tracks SET
-                                name = ?, artist = ?, artists = ?, album = ?,
-                                duration_ms = ?, spotify_url = ?, assigned_number = ?,
-                                added_at = ?, isrc = ?, cover_url = ?, release_date = ?,
-                                track_number = ?, disc_number = ?, year = ?, genres = ?,
-                                publisher = ?, copyright = ?, explicit = ?, popularity = ?,
-                                preview_url = ?, metadata = ?
-                            WHERE id = ?
-                        """, (
-                            row.get("name"), row.get("artist"), row.get("artists"),
-                            row.get("album"), row.get("duration_ms"), row.get("spotify_url"),
-                            row.get("assigned_number"), row.get("added_at"), row.get("isrc"),
-                            row.get("cover_url"), row.get("release_date"), row.get("track_number"),
-                            row.get("disc_number"), row.get("year"), row.get("genres"),
-                            row.get("publisher"), row.get("copyright"), row.get("explicit"),
-                            row.get("popularity"), row.get("preview_url"), row.get("metadata"),
-                            existing_tracks[track_id]
-                        ))
-                    else:
-                        # Insert new track
-                        conn.execute("""
-                            INSERT INTO tracks (
-                                playlist_id, spotify_id, name, artist, artists, album,
-                                duration_ms, spotify_url, youtube_url, downloaded,
-                                download_timestamp, file_path, lyrics_fetched, lyrics_text,
-                                lyrics_synced, lyrics_source, metadata_embedded, lyrics_embedded,
-                                assigned_number, added_at, isrc, cover_url, release_date,
-                                track_number, disc_number, year, genres, publisher, copyright,
-                                explicit, popularity, preview_url, metadata
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (
-                            db_id, track_id, row.get("name"), row.get("artist"),
-                            row.get("artists"), row.get("album"), row.get("duration_ms"),
-                            row.get("spotify_url"), None, 0, None, None, 0, None, 0, None,
-                            0, 0, row.get("assigned_number"), row.get("added_at"),
-                            row.get("isrc"), row.get("cover_url"), row.get("release_date"),
-                            row.get("track_number"), row.get("disc_number"), row.get("year"),
-                            row.get("genres"), row.get("publisher"), row.get("copyright"),
-                            row.get("explicit"), row.get("popularity"), row.get("preview_url"),
-                            row.get("metadata")
-                        ))
-                
-                conn.commit()
+                cursor = conn.execute("""
+                    SELECT g.spotify_id FROM global_tracks g
+                    JOIN playlist_tracks pt ON g.id = pt.track_id
+                    WHERE pt.playlist_id = ?
+                """, (db_id,))
+                return {row[0] for row in cursor.fetchall()}
     
-    def get_track(self, playlist_id: str, track_id: str) -> dict[str, Any] | None:
-        """
-        Get a single track's data.
-        
-        Args:
-            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
-            track_id: The Spotify track ID.
-        
-        Returns:
-            Dictionary with track data, or None if not found.
-        
-        Thread Safety:
-            Acquires _lock and returns a copy.
-        """
+    def get_liked_songs_track_ids(self) -> set[str]:
+        """Convenience method for sync mode with liked songs."""
+        return self.get_playlist_track_ids(LIKED_SONGS_KEY)
+    
+    def get_playlist_tracks(self, playlist_id: str) -> list[dict[str, Any]]:
+        """Get all tracks in a playlist, ordered by position."""
         with self._lock:
             with self._get_connection() as conn:
                 db_id = self._get_playlist_db_id(conn, playlist_id)
                 if db_id is None:
-                    return None
+                    return []
                 
+                cursor = conn.execute("""
+                    SELECT g.*, pt.position, pt.added_at as playlist_added_at
+                    FROM global_tracks g
+                    JOIN playlist_tracks pt ON g.id = pt.track_id
+                    WHERE pt.playlist_id = ?
+                    ORDER BY pt.position
+                """, (db_id,))
+                
+                result = []
+                for row in cursor.fetchall():
+                    track = self._deserialize_track_row(row)
+                    track["track_id"] = row["spotify_id"]
+                    result.append(track)
+                return result
+    
+    def get_playlists_containing_track(self, spotify_id: str) -> list[dict[str, Any]]:
+        """
+        Get all playlists containing a track (for --replace and FileManager).
+        
+        Returns list of dicts with: playlist_spotify_id, name, position
+        """
+        with self._lock:
+            with self._get_connection() as conn:
+                cursor = conn.execute("""
+                    SELECT p.spotify_id as playlist_spotify_id, p.name, pt.position
+                    FROM playlists p
+                    JOIN playlist_tracks pt ON p.id = pt.playlist_id
+                    JOIN global_tracks g ON pt.track_id = g.id
+                    WHERE g.spotify_id = ?
+                    ORDER BY p.name
+                """, (spotify_id,))
+                return [dict(row) for row in cursor.fetchall()]
+    
+    def get_max_position(self, playlist_id: str) -> int:
+        """Get the highest position number in a playlist."""
+        with self._lock:
+            with self._get_connection() as conn:
+                db_id = self._get_playlist_db_id(conn, playlist_id)
+                if db_id is None:
+                    return 0
                 cursor = conn.execute(
-                    "SELECT * FROM tracks WHERE playlist_id = ? AND spotify_id = ?",
-                    (db_id, track_id)
+                    "SELECT MAX(position) FROM playlist_tracks WHERE playlist_id = ?", (db_id,)
                 )
                 row = cursor.fetchone()
-                if row is None:
-                    return None
-                return self._row_to_track_data(row)
+                return row[0] if row[0] is not None else 0
     
-    def get_tracks_without_youtube_url(
-        self,
-        playlist_id: str
-    ) -> list[dict[str, Any]]:
-        """
-        Get all tracks that don't have a YouTube URL yet.
-        
-        Args:
-            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
-        
-        Returns:
-            List of track data dictionaries where youtube_url is None.
-            Each dict includes 'track_id' key for reference.
-        
-        Use Case:
-            Used in PHASE 2 to determine which tracks need YouTube matching.
-        
-        Thread Safety:
-            Acquires _lock and returns copies of track data.
-        """
+    # =========================================================================
+    # Track Processing Queries (Global - not per-playlist)
+    # =========================================================================
+    
+    def get_tracks_needing_youtube_match(self) -> list[dict[str, Any]]:
+        """Get all tracks that need YouTube matching (youtube_url IS NULL)."""
         with self._lock:
             with self._get_connection() as conn:
-                db_id = self._get_playlist_db_id(conn, playlist_id)
-                if db_id is None:
-                    return []
-                
-                cursor = conn.execute(
-                    "SELECT * FROM tracks WHERE playlist_id = ? AND youtube_url IS NULL",
-                    (db_id,)
-                )
-                result = []
-                for row in cursor.fetchall():
-                    track = self._row_to_track_data(row)
-                    track["track_id"] = row["spotify_id"]
-                    result.append(track)
-                return result
-    
-    def get_tracks_not_downloaded(
-        self,
-        playlist_id: str
-    ) -> list[dict[str, Any]]:
-        """
-        Get all tracks that have YouTube URL but aren't downloaded yet.
-        
-        Args:
-            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
-        
-        Returns:
-            List of track data dictionaries where:
-            - youtube_url is not None and not YOUTUBE_MATCH_FAILED
-            - downloaded is False
-            Each dict includes 'track_id' key for reference.
-        
-        Use Case:
-            Used in PHASE 3 to determine which tracks need downloading.
-        
-        Thread Safety:
-            Acquires _lock and returns copies of track data.
-        """
-        with self._lock:
-            with self._get_connection() as conn:
-                db_id = self._get_playlist_db_id(conn, playlist_id)
-                if db_id is None:
-                    return []
-                
                 cursor = conn.execute("""
-                    SELECT * FROM tracks 
-                    WHERE playlist_id = ? 
-                    AND youtube_url IS NOT NULL 
+                    SELECT * FROM global_tracks 
+                    WHERE youtube_url IS NULL 
+                    ORDER BY created_at
+                """)
+                return self._fetch_tracks_with_id(cursor)
+    
+    def get_tracks_needing_download(self) -> list[dict[str, Any]]:
+        """Get all tracks matched but not downloaded."""
+        with self._lock:
+            with self._get_connection() as conn:
+                cursor = conn.execute("""
+                    SELECT * FROM global_tracks
+                    WHERE youtube_url IS NOT NULL 
                     AND youtube_url != ?
                     AND downloaded = 0
-                """, (db_id, YOUTUBE_MATCH_FAILED))
-                
-                result = []
-                for row in cursor.fetchall():
-                    track = self._row_to_track_data(row)
-                    track["track_id"] = row["spotify_id"]
-                    result.append(track)
-                return result
+                    ORDER BY created_at
+                """, (YOUTUBE_MATCH_FAILED,))
+                return self._fetch_tracks_with_id(cursor)
     
-    def set_youtube_url(
-        self,
-        playlist_id: str,
-        track_id: str,
-        youtube_url: str
-    ) -> None:
-        """
-        Set the YouTube URL for a track after successful matching.
-        
-        Args:
-            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
-            track_id: The Spotify track ID.
-            youtube_url: The matched YouTube Music URL.
-        
-        Raises:
-            DatabaseError: If playlist or track doesn't exist.
-        
-        Thread Safety:
-            Acquires _lock for the entire operation.
-        """
+    def get_tracks_needing_lyrics(self) -> list[dict[str, Any]]:
+        """Get all downloaded tracks that need lyrics fetching."""
         with self._lock:
             with self._get_connection() as conn:
-                db_id = self._get_playlist_db_id(conn, playlist_id)
-                if db_id is None:
-                    raise DatabaseError(
-                        f"Playlist not found: {playlist_id}",
-                        details={"playlist_id": playlist_id}
-                    )
-                
-                cursor = conn.execute(
-                    "UPDATE tracks SET youtube_url = ? WHERE playlist_id = ? AND spotify_id = ?",
-                    (youtube_url, db_id, track_id)
-                )
-                if cursor.rowcount == 0:
-                    raise DatabaseError(
-                        f"Track not found: {track_id}",
-                        details={"playlist_id": playlist_id, "track_id": track_id}
-                    )
-                conn.commit()
-    
-    def mark_downloaded(
-        self,
-        playlist_id: str,
-        track_id: str,
-        file_path: Path
-    ) -> None:
-        """
-        Mark a track as successfully downloaded.
-        
-        Args:
-            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
-            track_id: The Spotify track ID.
-            file_path: Absolute path to the downloaded M4A file.
-        
-        Raises:
-            DatabaseError: If playlist or track doesn't exist.
-        
-        Thread Safety:
-            Acquires _lock for the entire operation.
-        """
-        with self._lock:
-            with self._get_connection() as conn:
-                db_id = self._get_playlist_db_id(conn, playlist_id)
-                if db_id is None:
-                    raise DatabaseError(
-                        f"Playlist not found: {playlist_id}",
-                        details={"playlist_id": playlist_id}
-                    )
-                
                 cursor = conn.execute("""
-                    UPDATE tracks SET 
-                        downloaded = 1, 
-                        file_path = ?, 
-                        download_timestamp = ?
-                    WHERE playlist_id = ? AND spotify_id = ?
-                """, (str(file_path), self._now_iso(), db_id, track_id))
-                
-                if cursor.rowcount == 0:
-                    raise DatabaseError(
-                        f"Track not found: {track_id}",
-                        details={"playlist_id": playlist_id, "track_id": track_id}
-                    )
-                conn.commit()
+                    SELECT * FROM global_tracks
+                    WHERE downloaded = 1 AND lyrics_fetched = 0
+                    ORDER BY created_at
+                """)
+                return self._fetch_tracks_with_id(cursor)
     
-    def mark_youtube_match_failed(
-        self,
-        playlist_id: str,
-        track_id: str
-    ) -> None:
-        """
-        Mark a track as failed to match on YouTube.
-        
-        Args:
-            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
-            track_id: The Spotify track ID.
-        
-        Raises:
-            DatabaseError: If playlist or track doesn't exist.
-        
-        Thread Safety:
-            Acquires _lock for the entire operation.
-        """
+    def get_tracks_needing_embedding(self) -> list[dict[str, Any]]:
+        """Get all tracks needing metadata or lyrics embedding."""
         with self._lock:
             with self._get_connection() as conn:
-                db_id = self._get_playlist_db_id(conn, playlist_id)
-                if db_id is None:
-                    raise DatabaseError(
-                        f"Playlist not found: {playlist_id}",
-                        details={"playlist_id": playlist_id}
+                cursor = conn.execute("""
+                    SELECT * FROM global_tracks
+                    WHERE downloaded = 1 AND (
+                        metadata_embedded = 0 
+                        OR (lyrics_fetched = 1 AND lyrics_text IS NOT NULL AND lyrics_embedded = 0)
                     )
-                
-                cursor = conn.execute(
-                    "UPDATE tracks SET youtube_url = ? WHERE playlist_id = ? AND spotify_id = ?",
-                    (YOUTUBE_MATCH_FAILED, db_id, track_id)
-                )
-                if cursor.rowcount == 0:
-                    raise DatabaseError(
-                        f"Track not found: {track_id}",
-                        details={"playlist_id": playlist_id, "track_id": track_id}
-                    )
-                conn.commit()
+                    ORDER BY created_at
+                """)
+                return self._fetch_tracks_with_id(cursor)
     
-    def reset_failed_matches(self, playlist_id: str) -> int:
-        """
-        Reset all failed YouTube matches for a playlist to allow re-matching.
-        
-        This method sets youtube_url back to NULL for all tracks that were
-        previously marked as YOUTUBE_MATCH_FAILED. This allows the matching
-        process to retry these tracks.
-        
-        Args:
-            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
-        
-        Returns:
-            Number of tracks that were reset.
-        
-        Raises:
-            DatabaseError: If playlist doesn't exist.
-        
-        Thread Safety:
-            Acquires _lock for the entire operation.
-        
-        Use Case:
-            Called when user runs with --force-rematch flag to retry
-            tracks that previously failed to match. This is useful when:
-            - YouTube Music catalog has been updated
-            - User wants to try with different network conditions
-            - Previous failures were due to transient issues
-        
-        Example:
-            reset_count = database.reset_failed_matches(playlist_id)
-            print(f"Reset {reset_count} failed matches for re-matching")
-        """
+    def _fetch_tracks_with_id(self, cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
+        """Helper to fetch tracks and add track_id alias."""
+        result = []
+        for row in cursor.fetchall():
+            track = self._deserialize_track_row(row)
+            track["track_id"] = row["spotify_id"]
+            result.append(track)
+        return result
+    
+    # =========================================================================
+    # Track State Updates (Global)
+    # =========================================================================
+    
+    def set_youtube_url(self, spotify_id: str, youtube_url: str, score: float | None = None) -> None:
+        """Set YouTube URL for a track (updates globally, affects all playlists)."""
         with self._lock:
             with self._get_connection() as conn:
-                db_id = self._get_playlist_db_id(conn, playlist_id)
-                if db_id is None:
-                    raise DatabaseError(
-                        f"Playlist not found: {playlist_id}",
-                        details={"playlist_id": playlist_id}
-                    )
+                now = self._now_iso()
+                cursor = conn.execute("""
+                    UPDATE global_tracks 
+                    SET youtube_url = ?, match_score = ?, match_timestamp = ?, updated_at = ?
+                    WHERE spotify_id = ?
+                """, (youtube_url, score, now, now, spotify_id))
                 
-                cursor = conn.execute(
-                    "UPDATE tracks SET youtube_url = NULL WHERE playlist_id = ? AND youtube_url = ?",
-                    (db_id, YOUTUBE_MATCH_FAILED)
-                )
-                reset_count = cursor.rowcount
+                if cursor.rowcount == 0:
+                    raise DatabaseError(f"Track not found: {spotify_id}")
                 conn.commit()
+    
+    def mark_youtube_match_failed(self, spotify_id: str) -> None:
+        """Mark a track as failed to match on YouTube."""
+        self.set_youtube_url(spotify_id, YOUTUBE_MATCH_FAILED, score=0.0)
+    
+    def mark_downloaded(self, spotify_id: str, file_path: Path | str) -> None:
+        """Mark track as downloaded with canonical file path."""
+        with self._lock:
+            with self._get_connection() as conn:
+                now = self._now_iso()
+                cursor = conn.execute("""
+                    UPDATE global_tracks 
+                    SET downloaded = 1, file_path = ?, download_timestamp = ?, updated_at = ?
+                    WHERE spotify_id = ?
+                """, (str(file_path), now, now, spotify_id))
                 
-                return reset_count
+                if cursor.rowcount == 0:
+                    raise DatabaseError(f"Track not found: {spotify_id}")
+                conn.commit()
     
-    # =========================================================================
-    # Liked Songs Operations
-    # =========================================================================
+    def set_lyrics(self, spotify_id: str, lyrics_text: str, is_synced: bool, source: str) -> None:
+        """Store fetched lyrics for a track."""
+        with self._lock:
+            with self._get_connection() as conn:
+                now = self._now_iso()
+                cursor = conn.execute("""
+                    UPDATE global_tracks 
+                    SET lyrics_text = ?, lyrics_synced = ?, lyrics_source = ?, 
+                        lyrics_fetched = 1, updated_at = ?
+                    WHERE spotify_id = ?
+                """, (lyrics_text, 1 if is_synced else 0, source, now, spotify_id))
+                
+                if cursor.rowcount == 0:
+                    raise DatabaseError(f"Track not found: {spotify_id}")
+                conn.commit()
     
-    def ensure_liked_songs_exists(self) -> None:
-        """
-        Ensure the liked_songs entry exists in the database.
-        
-        Behavior:
-            - If liked_songs doesn't exist, create it
-            - Update last_synced timestamp to current UTC time
-        
-        Thread Safety:
-            Acquires _lock for the entire operation.
-        """
+    def mark_lyrics_not_found(self, spotify_id: str) -> None:
+        """Mark that lyrics fetch was attempted but not found."""
+        with self._lock:
+            with self._get_connection() as conn:
+                now = self._now_iso()
+                conn.execute("""
+                    UPDATE global_tracks SET lyrics_fetched = 1, updated_at = ?
+                    WHERE spotify_id = ?
+                """, (now, spotify_id))
+                conn.commit()
+    
+    def mark_metadata_embedded(self, spotify_id: str, new_file_path: Path | str | None = None) -> None:
+        """Mark track as having metadata embedded."""
+        with self._lock:
+            with self._get_connection() as conn:
+                now = self._now_iso()
+                if new_file_path:
+                    conn.execute("""
+                        UPDATE global_tracks 
+                        SET metadata_embedded = 1, file_path = ?, updated_at = ?
+                        WHERE spotify_id = ?
+                    """, (str(new_file_path), now, spotify_id))
+                else:
+                    conn.execute("""
+                        UPDATE global_tracks SET metadata_embedded = 1, updated_at = ?
+                        WHERE spotify_id = ?
+                    """, (now, spotify_id))
+                conn.commit()
+    
+    def mark_lyrics_embedded(self, spotify_id: str) -> None:
+        """Mark track as having lyrics embedded."""
         with self._lock:
             with self._get_connection() as conn:
                 conn.execute("""
-                    INSERT INTO playlists (spotify_id, spotify_url, name, last_synced)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(spotify_id) DO UPDATE SET
-                        last_synced = excluded.last_synced
-                """, (LIKED_SONGS_KEY, None, "Liked Songs", self._now_iso()))
+                    UPDATE global_tracks SET lyrics_embedded = 1, updated_at = ?
+                    WHERE spotify_id = ?
+                """, (self._now_iso(), spotify_id))
                 conn.commit()
     
-    def get_liked_songs_track_ids(self) -> set[str]:
+    def reset_embedding_flags(self, spotify_id: str) -> None:
+        """Reset embedding flags after --replace (track needs re-embedding)."""
+        with self._lock:
+            with self._get_connection() as conn:
+                conn.execute("""
+                    UPDATE global_tracks 
+                    SET metadata_embedded = 0, lyrics_embedded = 0, updated_at = ?
+                    WHERE spotify_id = ?
+                """, (self._now_iso(), spotify_id))
+                conn.commit()
+    
+    def reset_failed_matches(self, playlist_id: str | None = None) -> int:
         """
-        Get all track IDs in the liked songs section.
+        Reset failed YouTube matches to allow re-matching.
+        
+        Args:
+            playlist_id: If provided, only reset tracks in this playlist.
+                        If None, reset ALL failed matches globally.
         
         Returns:
-            Set of Spotify track IDs in liked songs.
-            Empty set if liked_songs doesn't exist.
-        
-        Thread Safety:
-            Acquires _lock for the duration of the read.
-        """
-        return self.get_playlist_track_ids(LIKED_SONGS_KEY)
-    
-    # =========================================================================
-    # Lyrics
-    # =========================================================================
-    
-    def set_lyrics(
-        self,
-        playlist_id: str,
-        track_id: str,
-        lyrics_text: str,
-        is_synced: bool,
-        source: str
-    ) -> None:
-        """
-        Store fetched lyrics for a track.
-        
-        Args:
-            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
-            track_id: The Spotify track ID.
-            lyrics_text: The lyrics text (plain text or LRC format).
-            is_synced: True if lyrics are in LRC format with timestamps.
-            source: Provider name ("synced", "genius", etc.).
-        
-        Raises:
-            DatabaseError: If playlist or track doesn't exist.
-        
-        Thread Safety:
-            Acquires _lock for the entire operation.
+            Number of tracks reset.
         """
         with self._lock:
             with self._get_connection() as conn:
-                db_id = self._get_playlist_db_id(conn, playlist_id)
-                if db_id is None:
-                    raise DatabaseError(
-                        f"Playlist not found: {playlist_id}",
-                        details={"playlist_id": playlist_id}
-                    )
+                now = self._now_iso()
                 
-                cursor = conn.execute("""
-                    UPDATE tracks SET 
-                        lyrics_text = ?,
-                        lyrics_synced = ?,
-                        lyrics_source = ?,
-                        lyrics_fetched = 1
-                    WHERE playlist_id = ? AND spotify_id = ?
-                """, (lyrics_text, 1 if is_synced else 0, source, db_id, track_id))
-                
-                if cursor.rowcount == 0:
-                    raise DatabaseError(
-                        f"Track not found: {track_id}",
-                        details={"playlist_id": playlist_id, "track_id": track_id}
-                    )
-                conn.commit()
-    
-    def mark_lyrics_fetched(
-        self,
-        playlist_id: str,
-        track_id: str
-    ) -> None:
-        """
-        Mark a track as having had lyrics fetch attempted.
-        
-        Args:
-            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
-            track_id: The Spotify track ID.
-        
-        Raises:
-            DatabaseError: If playlist or track doesn't exist.
-        
-        Thread Safety:
-            Acquires _lock for the entire operation.
-        """
-        with self._lock:
-            with self._get_connection() as conn:
-                db_id = self._get_playlist_db_id(conn, playlist_id)
-                if db_id is None:
-                    raise DatabaseError(
-                        f"Playlist not found: {playlist_id}",
-                        details={"playlist_id": playlist_id}
-                    )
-                
-                cursor = conn.execute(
-                    "UPDATE tracks SET lyrics_fetched = 1 WHERE playlist_id = ? AND spotify_id = ?",
-                    (db_id, track_id)
-                )
-                if cursor.rowcount == 0:
-                    raise DatabaseError(
-                        f"Track not found: {track_id}",
-                        details={"playlist_id": playlist_id, "track_id": track_id}
-                    )
-                conn.commit()
-    
-    def get_tracks_needing_lyrics(
-        self,
-        playlist_id: str
-    ) -> list[dict[str, Any]]:
-        """
-        Get all tracks that need lyrics fetching.
-        
-        Args:
-            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
-        
-        Returns:
-            List of track data dictionaries where:
-            - downloaded is True
-            - lyrics_fetched is False
-            Each dict includes 'track_id' key for reference.
-        
-        Thread Safety:
-            Acquires _lock and returns copies of track data.
-        """
-        with self._lock:
-            with self._get_connection() as conn:
-                db_id = self._get_playlist_db_id(conn, playlist_id)
-                if db_id is None:
-                    return []
-                
-                cursor = conn.execute("""
-                    SELECT * FROM tracks 
-                    WHERE playlist_id = ? AND downloaded = 1 AND lyrics_fetched = 0
-                """, (db_id,))
-                
-                result = []
-                for row in cursor.fetchall():
-                    track = self._row_to_track_data(row)
-                    track["track_id"] = row["spotify_id"]
-                    result.append(track)
-                return result
-    
-    # =========================================================================
-    # Metadata embedding
-    # =========================================================================
-    
-    def mark_metadata_embedded(
-        self,
-        playlist_id: str,
-        track_id: str,
-        new_file_path: Path | None = None
-    ) -> None:
-        """
-        Mark a track as having metadata successfully embedded.
-        
-        Args:
-            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
-            track_id: The Spotify track ID.
-            new_file_path: Optional new file path if file was renamed.
-        
-        Raises:
-            DatabaseError: If playlist or track doesn't exist.
-        
-        Thread Safety:
-            Acquires _lock for the entire operation.
-        """
-        with self._lock:
-            with self._get_connection() as conn:
-                db_id = self._get_playlist_db_id(conn, playlist_id)
-                if db_id is None:
-                    raise DatabaseError(
-                        f"Playlist not found: {playlist_id}",
-                        details={"playlist_id": playlist_id}
-                    )
-                
-                if new_file_path is not None:
+                if playlist_id is not None:
+                    db_id = self._get_playlist_db_id(conn, playlist_id)
+                    if db_id is None:
+                        return 0
                     cursor = conn.execute("""
-                        UPDATE tracks SET metadata_embedded = 1, file_path = ?
-                        WHERE playlist_id = ? AND spotify_id = ?
-                    """, (str(new_file_path), db_id, track_id))
+                        UPDATE global_tracks 
+                        SET youtube_url = NULL, match_score = NULL, match_timestamp = NULL, updated_at = ?
+                        WHERE youtube_url = ?
+                        AND id IN (SELECT track_id FROM playlist_tracks WHERE playlist_id = ?)
+                    """, (now, YOUTUBE_MATCH_FAILED, db_id))
                 else:
                     cursor = conn.execute("""
-                        UPDATE tracks SET metadata_embedded = 1
-                        WHERE playlist_id = ? AND spotify_id = ?
-                    """, (db_id, track_id))
+                        UPDATE global_tracks 
+                        SET youtube_url = NULL, match_score = NULL, match_timestamp = NULL, updated_at = ?
+                        WHERE youtube_url = ?
+                    """, (now, YOUTUBE_MATCH_FAILED))
                 
-                if cursor.rowcount == 0:
-                    raise DatabaseError(
-                        f"Track not found: {track_id}",
-                        details={"playlist_id": playlist_id, "track_id": track_id}
-                    )
                 conn.commit()
-    
-    def mark_lyrics_embedded(
-        self,
-        playlist_id: str,
-        track_id: str
-    ) -> None:
-        """
-        Mark a track as having lyrics successfully embedded.
-        
-        Args:
-            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
-            track_id: The Spotify track ID.
-        
-        Raises:
-            DatabaseError: If playlist or track doesn't exist.
-        
-        Thread Safety:
-            Acquires _lock for the entire operation.
-        """
-        with self._lock:
-            with self._get_connection() as conn:
-                db_id = self._get_playlist_db_id(conn, playlist_id)
-                if db_id is None:
-                    raise DatabaseError(
-                        f"Playlist not found: {playlist_id}",
-                        details={"playlist_id": playlist_id}
-                    )
-                
-                cursor = conn.execute(
-                    "UPDATE tracks SET lyrics_embedded = 1 WHERE playlist_id = ? AND spotify_id = ?",
-                    (db_id, track_id)
-                )
-                if cursor.rowcount == 0:
-                    raise DatabaseError(
-                        f"Track not found: {track_id}",
-                        details={"playlist_id": playlist_id, "track_id": track_id}
-                    )
-                conn.commit()
-    
-    def get_tracks_needing_embedding(
-        self,
-        playlist_id: str
-    ) -> list[dict[str, Any]]:
-        """
-        Get all tracks that need metadata embedding.
-        
-        Args:
-            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
-        
-        Returns:
-            List of track data dictionaries where:
-            - downloaded is True
-            - metadata_embedded is False
-            Each dict includes 'track_id' key for reference.
-        
-        Thread Safety:
-            Acquires _lock and returns copies of track data.
-        """
-        with self._lock:
-            with self._get_connection() as conn:
-                db_id = self._get_playlist_db_id(conn, playlist_id)
-                if db_id is None:
-                    return []
-                
-                cursor = conn.execute("""
-                    SELECT * FROM tracks 
-                    WHERE playlist_id = ? AND downloaded = 1 AND metadata_embedded = 0
-                """, (db_id,))
-                
-                result = []
-                for row in cursor.fetchall():
-                    track = self._row_to_track_data(row)
-                    track["track_id"] = row["spotify_id"]
-                    result.append(track)
-                return result
+                return cursor.rowcount
     
     # =========================================================================
     # Statistics
     # =========================================================================
     
     def get_playlist_stats(self, playlist_id: str) -> dict[str, int]:
-        """
-        Get download statistics for a playlist.
-        
-        Args:
-            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
-        
-        Returns:
-            Dictionary with counts:
-            - total: Total number of tracks
-            - matched: Tracks with youtube_url set (not None and not YOUTUBE_MATCH_FAILED)
-            - downloaded: Tracks with downloaded=True
-            - failed_match: Tracks with youtube_url=YOUTUBE_MATCH_FAILED
-            - pending_match: Tracks with youtube_url=None
-            - pending_download: Tracks matched but not downloaded
-        
-        Thread Safety:
-            Acquires _lock and computes stats from current data.
-        """
+        """Get download statistics for a specific playlist."""
         with self._lock:
             with self._get_connection() as conn:
                 db_id = self._get_playlist_db_id(conn, playlist_id)
                 if db_id is None:
-                    return {
-                        "total": 0,
-                        "matched": 0,
-                        "downloaded": 0,
-                        "failed_match": 0,
-                        "pending_match": 0,
-                        "pending_download": 0
-                    }
+                    return {"total": 0, "matched": 0, "downloaded": 0, 
+                            "failed_match": 0, "pending_match": 0, "pending_download": 0}
                 
-                # Total tracks
+                stats = {}
+                
                 cursor = conn.execute(
-                    "SELECT COUNT(*) FROM tracks WHERE playlist_id = ?",
-                    (db_id,)
-                )
-                total = cursor.fetchone()[0]
+                    "SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = ?", (db_id,))
+                stats["total"] = cursor.fetchone()[0]
                 
-                # Downloaded
-                cursor = conn.execute(
-                    "SELECT COUNT(*) FROM tracks WHERE playlist_id = ? AND downloaded = 1",
-                    (db_id,)
-                )
-                downloaded = cursor.fetchone()[0]
+                cursor = conn.execute("""
+                    SELECT COUNT(*) FROM global_tracks g
+                    JOIN playlist_tracks pt ON g.id = pt.track_id
+                    WHERE pt.playlist_id = ? AND g.downloaded = 1
+                """, (db_id,))
+                stats["downloaded"] = cursor.fetchone()[0]
                 
-                # Failed match
-                cursor = conn.execute(
-                    "SELECT COUNT(*) FROM tracks WHERE playlist_id = ? AND youtube_url = ?",
-                    (db_id, YOUTUBE_MATCH_FAILED)
-                )
-                failed_match = cursor.fetchone()[0]
+                cursor = conn.execute("""
+                    SELECT COUNT(*) FROM global_tracks g
+                    JOIN playlist_tracks pt ON g.id = pt.track_id
+                    WHERE pt.playlist_id = ? AND g.youtube_url = ?
+                """, (db_id, YOUTUBE_MATCH_FAILED))
+                stats["failed_match"] = cursor.fetchone()[0]
                 
-                # Pending match (youtube_url is NULL)
-                cursor = conn.execute(
-                    "SELECT COUNT(*) FROM tracks WHERE playlist_id = ? AND youtube_url IS NULL",
-                    (db_id,)
-                )
-                pending_match = cursor.fetchone()[0]
+                cursor = conn.execute("""
+                    SELECT COUNT(*) FROM global_tracks g
+                    JOIN playlist_tracks pt ON g.id = pt.track_id
+                    WHERE pt.playlist_id = ? AND g.youtube_url IS NULL
+                """, (db_id,))
+                stats["pending_match"] = cursor.fetchone()[0]
                 
-                # Matched (has youtube_url that isn't MATCH_FAILED)
-                matched = total - pending_match - failed_match
+                stats["matched"] = stats["total"] - stats["pending_match"] - stats["failed_match"]
+                stats["pending_download"] = stats["matched"] - stats["downloaded"]
                 
-                # Pending download (matched but not downloaded)
-                pending_download = matched - downloaded
-                
-                return {
-                    "total": total,
-                    "matched": matched,
-                    "downloaded": downloaded,
-                    "failed_match": failed_match,
-                    "pending_match": pending_match,
-                    "pending_download": pending_download
-                }
+                return stats
     
-    # =========================================================================
-    # Utility
-    # =========================================================================
-    
-    def get_max_assigned_number(self, playlist_id: str) -> int:
-        """
-        Get the highest assigned_number for tracks in a playlist.
-        
-        Args:
-            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
-        
-        Returns:
-            The maximum assigned_number across all tracks in the playlist.
-            Returns 0 if no tracks exist or no tracks have assigned_number.
-        
-        Thread Safety:
-            Acquires _lock for the duration of the read.
-        """
+    def get_global_stats(self) -> dict[str, int]:
+        """Get overall database statistics."""
         with self._lock:
             with self._get_connection() as conn:
-                db_id = self._get_playlist_db_id(conn, playlist_id)
-                if db_id is None:
-                    return 0
+                stats = {}
+                
+                cursor = conn.execute("SELECT COUNT(*) FROM playlists")
+                stats["playlists"] = cursor.fetchone()[0]
+                
+                cursor = conn.execute("SELECT COUNT(*) FROM global_tracks")
+                stats["total_tracks"] = cursor.fetchone()[0]
                 
                 cursor = conn.execute(
-                    "SELECT MAX(assigned_number) FROM tracks WHERE playlist_id = ?",
-                    (db_id,)
+                    "SELECT COUNT(*) FROM global_tracks WHERE youtube_url IS NOT NULL AND youtube_url != ?",
+                    (YOUTUBE_MATCH_FAILED,))
+                stats["matched_tracks"] = cursor.fetchone()[0]
+                
+                cursor = conn.execute("SELECT COUNT(*) FROM global_tracks WHERE downloaded = 1")
+                stats["downloaded_tracks"] = cursor.fetchone()[0]
+                
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM global_tracks WHERE lyrics_text IS NOT NULL")
+                stats["tracks_with_lyrics"] = cursor.fetchone()[0]
+                
+                cursor = conn.execute("SELECT COUNT(*) FROM playlist_tracks")
+                stats["playlist_track_links"] = cursor.fetchone()[0]
+                
+                # This shows the efficiency gain: links > unique tracks = deduplication working
+                stats["deduplication_ratio"] = (
+                    round(stats["playlist_track_links"] / stats["total_tracks"], 2)
+                    if stats["total_tracks"] > 0 else 0
                 )
-                row = cursor.fetchone()
-                return row[0] if row[0] is not None else 0
-    
-    def get_next_track_number(self, playlist_id: str) -> int:
-        """
-        Get the next track number for file naming.
-        
-        Args:
-            playlist_id: The Spotify playlist ID (or LIKED_SONGS_KEY).
-        
-        Returns:
-            The next track number to use (1-indexed).
-            This is get_max_assigned_number() + 1.
-        
-        Thread Safety:
-            Acquires _lock for the duration of the calculation.
-        """
-        return self.get_max_assigned_number(playlist_id) + 1
+                
+                return stats

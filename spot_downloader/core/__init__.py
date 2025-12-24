@@ -5,12 +5,13 @@ This module provides the foundational components used throughout the application
     - exceptions: Custom exception classes for error handling
     - config: Configuration loading and validation
     - database: Thread-safe SQLite database for persistent storage
+    - file_manager: File storage with hard links for playlist views
     - logger: Logging system with multiple outputs
 
 Usage:
     from spot_downloader.core import (
         Config, load_config,
-        Database,
+        Database, FileManager,
         setup_logging, get_logger,
         SpotDownloaderError, ConfigError, DatabaseError
     )
@@ -24,6 +25,7 @@ from spot_downloader.core.config import (
     load_config,
 )
 from spot_downloader.core.database import Database, LIKED_SONGS_KEY, YOUTUBE_MATCH_FAILED
+from spot_downloader.core.file_manager import FileManager, sanitize_filename
 from spot_downloader.core.exceptions import (
     ConfigError,
     DatabaseError,
@@ -55,6 +57,9 @@ __all__ = [
     "Database",
     "LIKED_SONGS_KEY",
     "YOUTUBE_MATCH_FAILED",
+    # File Manager
+    "FileManager",
+    "sanitize_filename",
     # Exceptions
     "SpotDownloaderError",
     "ConfigError",
