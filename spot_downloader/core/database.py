@@ -29,9 +29,10 @@ Usage:
 import json
 import sqlite3
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
 
 from spot_downloader.core.exceptions import DatabaseError
 
@@ -126,12 +127,14 @@ class Database:
     """
     Thread-safe SQLite database with Global Track Registry.
     
+    Uses a single persistent connection with thread locking for safety.
     All public methods acquire self._lock before executing.
     """
     
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
         self._lock = threading.Lock()
+        self._conn: sqlite3.Connection | None = None
         
         if not db_path.parent.exists():
             raise DatabaseError(
@@ -147,15 +150,43 @@ class Database:
                 details={"path": str(db_path)}
             ) from e
     
-    def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path), timeout=30.0)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
+    @contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """
+        Get the persistent database connection as a context manager.
+        
+        The connection is created once and reused for all operations.
+        The context manager pattern is kept for compatibility but doesn't
+        close the connection on exit.
+        """
+        if self._conn is None:
+            self._conn = sqlite3.connect(
+                str(self.db_path), 
+                timeout=30.0,
+                check_same_thread=False  # We handle thread safety with _lock
+            )
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA foreign_keys = ON")
+            self._conn.execute("PRAGMA journal_mode = WAL")
+        yield self._conn
+    
+    def close(self) -> None:
+        """Close the database connection."""
+        with self._lock:
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None
+    
+    def __del__(self) -> None:
+        """Ensure connection is closed on garbage collection."""
+        if hasattr(self, '_conn') and self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
     
     def _init_database(self) -> None:
         with self._get_connection() as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA_SQL)
             
             cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")

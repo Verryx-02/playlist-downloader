@@ -131,8 +131,11 @@ class SpotifyFetcher:
         # 6. Assign position numbers
         if sync_mode:
             existing_max = self._database.get_max_position(playlist_id)
+            # Get existing track IDs BEFORE storing new tracks
+            existing_track_ids = self._database.get_playlist_track_ids(playlist_id)
         else:
             existing_max = 0
+            existing_track_ids = set()
         tracks = _assign_track_numbers(tracks, existing_max)
         
         # 7. Create/update playlist in database
@@ -145,10 +148,11 @@ class SpotifyFetcher:
         # 8. Store tracks in Global Track Registry
         self._store_tracks(tracks, playlist_id)
         
-        # 9. Filter for sync mode
+        # 9. Filter for sync mode (using pre-stored existing IDs)
         if sync_mode:
-            tracks = self._filter_new_tracks(tracks, playlist_id)
-            logger.info(f"Sync mode: {len(tracks)} new tracks to process")
+            new_tracks = [t for t in tracks if t.spotify_id not in existing_track_ids]
+            logger.info(f"Sync mode: {len(new_tracks)} new tracks to process")
+            tracks = new_tracks
         
         # 10. Create Playlist object
         playlist = Playlist.from_spotify_api(playlist_data, tracks)
@@ -196,8 +200,11 @@ class SpotifyFetcher:
         # 5. Assign position numbers
         if sync_mode:
             existing_max = self._database.get_max_position(LIKED_SONGS_KEY)
+            # Get existing track IDs BEFORE storing new tracks
+            existing_track_ids = self._database.get_liked_songs_track_ids()
         else:
             existing_max = 0
+            existing_track_ids = set()
         tracks = _assign_track_numbers(tracks, existing_max)
         
         # 6. Ensure liked_songs entry exists
@@ -206,10 +213,11 @@ class SpotifyFetcher:
         # 7. Store tracks in Global Track Registry
         self._store_tracks(tracks, LIKED_SONGS_KEY)
         
-        # 8. Filter for sync mode
+        # 8. Filter for sync mode (using pre-stored existing IDs)
         if sync_mode:
-            tracks = self._filter_new_tracks(tracks, LIKED_SONGS_KEY)
-            logger.info(f"Sync mode: {len(tracks)} new tracks to process")
+            new_tracks = [t for t in tracks if t.spotify_id not in existing_track_ids]
+            logger.info(f"Sync mode: {len(new_tracks)} new tracks to process")
+            tracks = new_tracks
         
         # 9. Create LikedSongs object
         liked_songs = LikedSongs.from_spotify_api(tracks, total_count)

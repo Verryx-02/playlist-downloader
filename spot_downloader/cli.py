@@ -9,6 +9,8 @@ Commands:
     spot --url <playlist_url>           Download a playlist (all phases)
     spot --liked                        Download liked songs (all phases)
     spot --url <url> --sync             Sync mode (only new tracks)
+    spot --sync                         Sync ALL known playlists + liked songs
+    spot --sync --no-liked              Sync ALL playlists (no Spotify login needed)
     spot --1 --url <url>                Run only PHASE 1 (fetch metadata)
     spot --2                            Run only PHASE 2 (YouTube match)
     spot --3                            Run only PHASE 3 (download audio)
@@ -25,6 +27,12 @@ Usage:
     
     # Sync mode (download only new tracks)
     spot --url "https://open.spotify.com/playlist/..." --sync
+    
+    # Sync ALL known playlists and liked songs
+    spot --sync
+    
+    # Sync ALL playlists only (no Spotify login required)
+    spot --sync --no-liked
     
     # Download liked songs
     spot --liked
@@ -112,7 +120,12 @@ __version__ = "0.2.0"
 @click.option(
     "--sync",
     is_flag=True,
-    help="Sync mode: only download new tracks not already in database."
+    help="Sync mode: only download new tracks. Without --url or --liked, syncs ALL known playlists."
+)
+@click.option(
+    "--no-liked",
+    is_flag=True,
+    help="With --sync: skip Liked Songs (no Spotify login required)."
 )
 @click.option(
     "--1", "phase1_only",
@@ -168,6 +181,7 @@ def cli(
     url: Optional[str],
     liked: bool,
     sync: bool,
+    no_liked: bool,
     phase1_only: bool,
     phase2_only: bool,
     phase3_only: bool,
@@ -188,6 +202,8 @@ def cli(
     Examples:
         spot --url "https://open.spotify.com/playlist/..."
         spot --url "https://..." --sync
+        spot --sync                    # Sync all playlists + liked songs
+        spot --sync --no-liked         # Sync all playlists (no login)
         spot --liked
         spot --replace song.m4a "https://youtube.com/watch?v=..."
     """
@@ -205,15 +221,24 @@ def cli(
     phase_flags = [phase1_only, phase2_only, phase3_only, phase4_only, phase5_only]
     has_phase_flag = any(phase_flags)
     
+    # --sync without --url and --liked means "sync all known playlists"
+    sync_all = sync and not url and not liked and not has_phase_flag
+    
     # Validate: show help only if no meaningful arguments
     # Phases 2-5 can run without --url/--liked (they use database)
-    if not url and not liked and not has_phase_flag:
+    if not url and not liked and not has_phase_flag and not sync:
         # No arguments at all - show help
         click.echo(ctx.get_help())
         ctx.exit(0)
     
     if url and liked:
         raise click.UsageError("Cannot use both --url and --liked")
+    
+    # --no-liked only makes sense with --sync (and without --liked)
+    if no_liked and not sync:
+        raise click.UsageError("--no-liked can only be used with --sync")
+    if no_liked and liked:
+        raise click.UsageError("Cannot use both --liked and --no-liked")
     
     # Validate URL is a playlist URL (not track, album, or artist)
     if url and "/playlist/" not in url:
@@ -258,11 +283,18 @@ def cli(
         run_phase4 = True
         run_phase5 = True
     
+    # Determine if user authentication is needed
+    # - --liked always requires user auth
+    # - --sync (all) requires user auth unless --no-liked is specified
+    needs_user_auth = liked or (sync_all and not no_liked)
+    
     # Store in context for the command
     ctx.ensure_object(dict)
     ctx.obj["url"] = url
     ctx.obj["liked"] = liked
     ctx.obj["sync"] = sync
+    ctx.obj["sync_all"] = sync_all
+    ctx.obj["no_liked"] = no_liked
     ctx.obj["run_phase1"] = run_phase1
     ctx.obj["run_phase2"] = run_phase2
     ctx.obj["run_phase3"] = run_phase3
@@ -270,7 +302,7 @@ def cli(
     ctx.obj["run_phase5"] = run_phase5
     ctx.obj["cookie_file"] = cookie_file
     ctx.obj["force_rematch"] = force_rematch
-    ctx.obj["user_auth"] = liked  # True if --liked, False otherwise
+    ctx.obj["user_auth"] = needs_user_auth
     
     # Run the download workflow
     _run_download(ctx.obj)
@@ -331,7 +363,15 @@ def _run_download(options: dict) -> None:
         # Run phases
         tracks = None
         
-        if options["run_phase1"]:
+        # Handle sync_all mode (--sync without --url or --liked)
+        if options.get("sync_all"):
+            tracks = _run_sync_all(
+                database=database,
+                include_liked=not options.get("no_liked", False)
+            )
+            # After sync_all, we don't need to run phase1 again
+            # and playlist_id stays None (phases work globally)
+        elif options["run_phase1"]:
             tracks = _run_phase1(
                 database=database,
                 url=options["url"],
@@ -357,31 +397,43 @@ def _run_download(options: dict) -> None:
                 sys.exit(1)
         
         if options["run_phase3"]:
-            _run_phase3(
-                database=database,
-                playlist_id=playlist_id,
-                output_dir=config.output.directory,
-                cookie_file=cookie_file,
-                num_threads=config.download.threads
-            )
+            try:
+                _run_phase3(
+                    database=database,
+                    playlist_id=playlist_id,
+                    output_dir=config.output.directory,
+                    cookie_file=cookie_file,
+                    num_threads=config.download.threads
+                )
+            except NotImplementedError:
+                logger.warning("PHASE 3 not yet implemented - skipping")
         
         if options["run_phase4"]:
-            _run_phase4(
-                database=database,
-                playlist_id=playlist_id,
-                num_threads=config.download.threads
-            )
+            try:
+                _run_phase4(
+                    database=database,
+                    playlist_id=playlist_id,
+                    num_threads=config.download.threads
+                )
+            except NotImplementedError:
+                logger.warning("PHASE 4 not yet implemented - skipping")
 
         if options["run_phase5"]:
-            _run_phase5(
-                database=database,
-                playlist_id=playlist_id,
-                output_dir=config.output.directory,
-                num_threads=config.download.threads
-            )
+            try:
+                _run_phase5(
+                    database=database,
+                    playlist_id=playlist_id,
+                    output_dir=config.output.directory,
+                    num_threads=config.download.threads
+                )
+            except NotImplementedError:
+                logger.warning("PHASE 5 not yet implemented - skipping")
         
-        # Final statistics (only if we have a specific playlist)
-        if playlist_id is not None:
+        # Final statistics
+        if options.get("sync_all"):
+            # Print global stats for sync_all mode
+            _print_global_stats(database)
+        elif playlist_id is not None:
             _print_final_stats(database, playlist_id)
         
         logger.info("spot-downloader completed successfully")
@@ -511,6 +563,80 @@ def _run_phase1(
     
     logger.info("PHASE 1 complete")
     return list(tracks)
+
+
+def _run_sync_all(database: Database, include_liked: bool = True) -> list[Track]:
+    """
+    Sync all known playlists (and optionally Liked Songs).
+    
+    This is the main function for `spot --sync` without --url or --liked.
+    It fetches metadata for all playlists previously added to the database.
+    
+    Args:
+        database: Database instance.
+        include_liked: Whether to also sync Liked Songs (requires user auth).
+    
+    Returns:
+        Combined list of new Track objects from all playlists.
+    
+    Behavior:
+        1. Get all playlists from database
+        2. For each playlist, run Phase 1 in sync mode
+        3. If include_liked, also sync Liked Songs
+        4. Return combined list of new tracks
+    """
+    logger.info("=" * 60)
+    logger.info("SYNC ALL: Syncing all known playlists")
+    logger.info("=" * 60)
+    
+    all_playlists = database.get_all_playlists()
+    
+    # Filter out liked songs entry if present (we handle it separately)
+    playlists = [p for p in all_playlists if p["spotify_id"] != LIKED_SONGS_KEY]
+    
+    if not playlists and not include_liked:
+        logger.warning("No playlists found in database. Add a playlist first with --url")
+        return []
+    
+    all_new_tracks: list[Track] = []
+    
+    # Sync each playlist
+    for i, playlist_info in enumerate(playlists, 1):
+        spotify_url = playlist_info.get("spotify_url")
+        name = playlist_info.get("name", "Unknown")
+        
+        if not spotify_url:
+            logger.warning(f"Skipping playlist '{name}': no URL stored")
+            continue
+        
+        logger.info(f"[{i}/{len(playlists)}] Syncing: {name}")
+        
+        try:
+            playlist, tracks = fetch_playlist_phase1(
+                database, 
+                spotify_url, 
+                sync_mode=True
+            )
+            all_new_tracks.extend(tracks)
+            logger.info(f"  → {len(tracks)} new tracks")
+        except Exception as e:
+            logger.error(f"  → Failed to sync '{name}': {e}")
+            continue
+    
+    # Sync Liked Songs if requested
+    if include_liked:
+        logger.info(f"Syncing: Liked Songs")
+        try:
+            liked_songs, tracks = fetch_liked_songs_phase1(database, sync_mode=True)
+            all_new_tracks.extend(tracks)
+            logger.info(f"  → {len(tracks)} new tracks")
+        except Exception as e:
+            logger.error(f"  → Failed to sync Liked Songs: {e}")
+    
+    logger.info("-" * 60)
+    logger.info(f"SYNC ALL complete: {len(all_new_tracks)} total new tracks")
+    
+    return all_new_tracks
 
 
 def _run_phase2(
@@ -765,6 +891,31 @@ def _print_final_stats(database: Database, playlist_id: str) -> None:
     logger.info(f"Failed to match:   {stats['failed_match']}")
     logger.info(f"Pending match:     {stats['pending_match']}")
     logger.info(f"Pending download:  {stats['pending_download']}")
+    logger.info("=" * 60)
+
+
+def _print_global_stats(database: Database) -> None:
+    """
+    Print global statistics across all playlists.
+    
+    Used after sync_all mode to show overall status.
+    
+    Args:
+        database: Database instance.
+    """
+    stats = database.get_global_stats()
+    
+    logger.info("=" * 60)
+    logger.info("GLOBAL STATISTICS")
+    logger.info("=" * 60)
+    logger.info(f"Playlists:         {stats['playlists']}")
+    logger.info(f"Unique tracks:     {stats['total_tracks']}")
+    logger.info(f"Matched:           {stats['matched_tracks']}")
+    logger.info(f"Downloaded:        {stats['downloaded_tracks']}")
+    logger.info(f"With lyrics:       {stats['tracks_with_lyrics']}")
+    logger.info(f"Playlist links:    {stats['playlist_track_links']}")
+    if stats['deduplication_ratio'] > 1:
+        logger.info(f"Dedup ratio:       {stats['deduplication_ratio']}x (storage saved!)")
     logger.info("=" * 60)
 
 
