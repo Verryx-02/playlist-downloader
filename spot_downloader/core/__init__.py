@@ -42,6 +42,8 @@ from spot_downloader.core.logger import (
     shutdown_logging,
 )
 
+from spot_downloader.core.progress import MatchingProgressBar
+
 __all__ = [
     # Config
     "Config",
@@ -68,4 +70,5 @@ __all__ = [
     "log_download_failure",
     "log_lyrics_failure",
     "shutdown_logging",
+    "MatchingProgressBar",
 ]

@@ -63,6 +63,7 @@ class Colors:
     GREEN = "\033[32m"
     YELLOW = "\033[33m"
     BLUE = "\033[34m"
+    MAGENTA = "\033[35m"
     CYAN = "\033[36m"
     WHITE = "\033[37m"
     BOLD = "\033[1m"
@@ -590,51 +591,28 @@ def setup_logging(output_dir: Path) -> None:
     
     Args:
         output_dir: Directory where log files will be created.
-                    Logs are stored in a 'logs' subdirectory.
+                    Logs are stored in logs/{timestamp}/ subdirectory.
     
     Behavior:
-        1. Create output_dir/logs if it doesn't exist
-        2. Generate timestamp for this run's log files
-        3. Configure root logger level to DEBUG
-        4. Create and configure console handler (TqdmLoggingHandler)
-           - Level: INFO
-           - Format: Compact (no timestamp)
-        5. Create and configure full log file handler
-           - Path: output_dir/logs/log_full_{timestamp}.log
-           - Level: DEBUG
-           - Format: Full with timestamp
-        6. Create and configure error log file handler
-           - Path: output_dir/logs/log_errors_{timestamp}.log
-           - Level: DEBUG (filtered to ERROR+ by ErrorOnlyFilter)
-           - Format: Full with timestamp
-        7. Create and configure download failed track handler
-           - Path: output_dir/logs/download_failures_{timestamp}.log
-        8. Create and configure lyrics failed track handler
-           - Path: output_dir/logs/lyrics_failures_{timestamp}.log
-        9. Create and configure match close alternatives handler
-           - Path: output_dir/logs/match_close_alternatives_{timestamp}.log
-        10. Add all handlers to root logger
+        1. Create output_dir/logs/{timestamp} directory
+        2. Configure root logger level to DEBUG
+        3. Create and configure all handlers with appropriate paths
     
     File Handling:
-        - Each run creates new log files with unique timestamps
+        - Each run creates a new timestamped subdirectory
         - Files use UTF-8 encoding
         - Files are closed automatically on program exit
     
     Thread Safety:
         This function is NOT thread-safe. Call it once from the main
         thread before starting any worker threads.
-    
-    See Also:
-        log_download_failure(): Helper to log with correct extra fields
-        log_lyrics_failure(): Helper to log with correct extra fields
-        log_match_close_alternatives(): Helper to log match alternatives
     """
-    # Create logs subdirectory
-    logs_dir = output_dir / "logs"
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    
     # Generate timestamp for this run
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    
+    # Create timestamped logs subdirectory
+    logs_dir = output_dir / "logs" / timestamp
+    logs_dir.mkdir(parents=True, exist_ok=True)
     
     # Get root logger
     root_logger = logging.getLogger()
@@ -650,14 +628,14 @@ def setup_logging(output_dir: Path) -> None:
     root_logger.addHandler(console_handler)
     
     # Full log file handler
-    full_log_path = logs_dir / f"log_full_{timestamp}.log"
+    full_log_path = logs_dir / "log_full.log"
     full_handler = logging.FileHandler(full_log_path, mode="w", encoding="utf-8")
     full_handler.setLevel(logging.DEBUG)
     full_handler.setFormatter(logging.Formatter(FILE_LOG_FORMAT, FILE_DATE_FORMAT))
     root_logger.addHandler(full_handler)
     
     # Error-only log file handler
-    error_log_path = logs_dir / f"log_errors_{timestamp}.log"
+    error_log_path = logs_dir / "log_errors.log"
     error_handler = logging.FileHandler(error_log_path, mode="w", encoding="utf-8")
     error_handler.setLevel(logging.DEBUG)  # Filter handles the level restriction
     error_handler.setFormatter(logging.Formatter(FILE_LOG_FORMAT, FILE_DATE_FORMAT))
@@ -665,19 +643,19 @@ def setup_logging(output_dir: Path) -> None:
     root_logger.addHandler(error_handler)
     
     # Download failures handler
-    download_failures_path = logs_dir / f"download_failures_{timestamp}.log"
+    download_failures_path = logs_dir / "download_failures.log"
     download_handler = DownloadFailedTrackHandler(download_failures_path)
     download_handler.open()
     root_logger.addHandler(download_handler)
     
     # Lyrics failures handler
-    lyrics_failures_path = logs_dir / f"lyrics_failures_{timestamp}.log"
+    lyrics_failures_path = logs_dir / "lyrics_failures.log"
     lyrics_handler = LyricsFailedTrackHandler(lyrics_failures_path)
     lyrics_handler.open()
     root_logger.addHandler(lyrics_handler)
     
     # Match close alternatives handler
-    match_alt_path = logs_dir / f"match_close_alternatives_{timestamp}.log"
+    match_alt_path = logs_dir / "match_close_alternatives.log"
     match_alt_handler = MatchCloseAlternativesHandler(match_alt_path)
     match_alt_handler.open()
     root_logger.addHandler(match_alt_handler)
@@ -771,7 +749,7 @@ def format_no_match_message(artist: str, name: str, reason: str) -> str:
 
 def format_progress_message(completed: int, total: int, matched: int, failed: int) -> str:
     """
-    Format a progress message.
+    Format a progress message with colors.
     
     Args:
         completed: Number of completed tracks.
@@ -783,7 +761,8 @@ def format_progress_message(completed: int, total: int, matched: int, failed: in
         Formatted message string.
     """
     return (
-        f"Progress: {completed}/{total} "
+        f"{Colors.MAGENTA}{Colors.BOLD}Progress{Colors.RESET}: "
+        f"{completed}/{total} "
         f"(matched: {Colors.GREEN}{matched}{Colors.RESET}, "
         f"failed: {Colors.RED}{failed}{Colors.RESET})"
     )
@@ -957,7 +936,7 @@ def log_match_close_alternatives(
         #   - Song Title (Live) https://www.youtube.com/watch?v=www (score: 83.1)
         # Multiple close matches found. Verify if correct.
     """
-    logger.warning(
+    logger.debug(
         f"Multiple close matches for: {track_name} (selected score: {score:.1f})",
         extra={
             "match_alt_track_name": track_name,

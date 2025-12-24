@@ -49,13 +49,16 @@ from spot_downloader.spotify.models import Track
 from spot_downloader.youtube.models import MatchResult, YouTubeResult
 
 from spot_downloader.core.logger import (
-    get_logger, 
+    get_logger,
     log_match_close_alternatives,
     format_matched_message,
     format_close_matches_message,
     format_no_match_message,
     format_progress_message,
+    Colors,
 )
+from spot_downloader.core.progress import MatchingProgressBar
+
 
 logger = get_logger(__name__)
 
@@ -417,188 +420,172 @@ class YouTubeMatcher:
             close_alternatives=alternatives
         )
     
+    
     def match_tracks(
         self,
         tracks: list[Track],
         playlist_id: str,
-        num_threads: int = 4
+        num_threads: int = 4,
+        progress_bar: MatchingProgressBar | None = None
     ) -> list[MatchResult]:
         """
         Match multiple tracks using parallel processing.
-        
-        This is the main entry point for PHASE 2 batch processing.
         
         Args:
             tracks: List of Track objects to match.
             playlist_id: Playlist ID for database updates.
             num_threads: Number of parallel threads for matching.
-                        More threads = faster but higher API load.
+            progress_bar: Optional existing progress bar to use.
+                         If None, creates a new one.
         
         Returns:
             List of MatchResult objects, one per input track.
-            Order matches input order.
-        
-        Behavior:
-            1. Create thread pool with num_threads workers
-            2. Submit match_track() task for each track
-            3. As results complete:
-               a. Update database (set_youtube_url or mark_failed)
-               b. Log progress
-               c. Log close alternatives if present
-            4. Wait for all tasks to complete
-            5. Return all results
-        
-        Progress:
-            Logs progress updates as matches complete.
-        
-        Database Updates:
-            For each track:
-            - If matched: set_youtube_url(playlist_id, track_id, url)
-            - If failed: mark_youtube_match_failed(playlist_id, track_id)
-        
-        Thread Safety:
-            Uses ThreadPoolExecutor for parallel processing.
-            Database updates are thread-safe via Database locking.
-        
-        Example:
-            matcher = YouTubeMatcher(database)
-            results = matcher.match_tracks(tracks, playlist_id, num_threads=4)
-            
-            matched_count = sum(1 for r in results if r.matched)
-            print(f"Matched {matched_count}/{len(tracks)} tracks")
         """
         if not tracks:
-            logger.info("No tracks to match")
             return []
-        
-        logger.info(f"Matching {len(tracks)} tracks using {num_threads} threads")
         
         # Map to store results in original order
         results_map: dict[str, MatchResult] = {}
         
-        # Track progress
-        completed = 0
-        matched = 0
-        failed = 0
+        # Determine if we own the progress bar (and should manage its lifecycle)
+        own_progress_bar = progress_bar is None
+        if own_progress_bar:
+            progress_bar = MatchingProgressBar(total=len(tracks), description="Matching")
+            progress_bar.start()
         
         def process_track(track: Track) -> tuple[Track, MatchResult]:
             """Process a single track and return both track and result."""
             result = self.match_track(track)
             return (track, result)
         
-        with ThreadPoolExecutor(max_workers=num_threads) as executor:
-            # Submit all tasks
-            future_to_track = {
-                executor.submit(process_track, track): track
-                for track in tracks
-            }
-            
-            # Process results as they complete
-            for future in as_completed(future_to_track):
-                track = future_to_track[future]
+        try:
+            with ThreadPoolExecutor(max_workers=num_threads) as executor:
+                # Submit all tasks
+                future_to_track = {
+                    executor.submit(process_track, track): track
+                    for track in tracks
+                }
                 
-                try:
-                    _, result = future.result()
-                    results_map[track.spotify_id] = result
+                # Process results as they complete
+                for future in as_completed(future_to_track):
+                    track = future_to_track[future]
                     
-                    # Update database
-                    if result.matched:
-                        self._database.set_youtube_url(
-                            playlist_id,
-                            track.spotify_id,
-                            result.youtube_url
-                        )
-                        matched += 1
-                        logger.info(
-                            format_matched_message(
-                                track.artist, 
-                                track.name, 
+                    try:
+                        _, result = future.result()
+                        results_map[track.spotify_id] = result
+                        
+                        # Update database and log
+                        if result.matched:
+                            self._database.set_youtube_url(
+                                playlist_id,
+                                track.spotify_id,
                                 result.youtube_url
                             )
-                        )
-                        
-                        # Log close alternatives if present
-                        if result.has_close_alternatives:
-                            # Build alternatives list with titles
-                            alternatives_with_titles = [
-                                (alt.title, alt.url, score) 
-                                for alt, score in result.close_alternatives
-                            ]
-                            # Get selected YouTube title
-                            selected_title = result.youtube_result.title if result.youtube_result else ""
-                            
-                            # Log warning to console
-                            logger.warning(
-                                format_close_matches_message(
-                                    track.name,
+                            progress_bar.log(
+                                format_matched_message(
                                     track.artist,
-                                    result.confidence * 100
+                                    track.name,
+                                    result.youtube_url
                                 )
                             )
                             
-                            # Log to file
-                            log_match_close_alternatives(
-                                logger=logger,
-                                track_name=track.name,
-                                artist=track.artist,
-                                spotify_url=track.spotify_url,
-                                youtube_url=result.youtube_url,
-                                youtube_title=selected_title,
-                                score=result.confidence * 100,
-                                alternatives=alternatives_with_titles,
-                                assigned_number=track.assigned_number
+                            # Log close alternatives if present
+                            if result.has_close_alternatives:
+                                alternatives_with_titles = [
+                                    (alt.title, alt.url, score)
+                                    for alt, score in result.close_alternatives
+                                ]
+                                selected_title = result.youtube_result.title if result.youtube_result else ""
+                                
+                                # Log warning to console (colored)
+                                progress_bar.log(
+                                    f"{Colors.YELLOW}WARNING{Colors.RESET}: " +
+                                    format_close_matches_message(
+                                        track.name,
+                                        track.artist,
+                                        result.confidence * 100
+                                    )
+                                )
+                                
+                                # Log to file only
+                                log_match_close_alternatives(
+                                    logger=logger,
+                                    track_name=track.name,
+                                    artist=track.artist,
+                                    spotify_url=track.spotify_url,
+                                    youtube_url=result.youtube_url,
+                                    youtube_title=selected_title,
+                                    score=result.confidence * 100,
+                                    alternatives=alternatives_with_titles,
+                                    assigned_number=track.assigned_number
+                                )
+                            
+                            # Update progress bar
+                            progress_bar.update(
+                                matched=True,
+                                has_close_matches=result.has_close_alternatives
                             )
-                    else:
+                        else:
+                            self._database.mark_youtube_match_failed(
+                                playlist_id,
+                                track.spotify_id
+                            )
+                            progress_bar.log(
+                                f"{Colors.RED}ERROR{Colors.RESET}: " +
+                                format_no_match_message(
+                                    track.artist,
+                                    track.name,
+                                    result.match_reason
+                                )
+                            )
+                            progress_bar.update(matched=False)
+                        
+                    except Exception as e:
+                        logger.error(
+                            f"Error matching {track.artist} - {track.name}: {e}"
+                        )
+                        results_map[track.spotify_id] = MatchResult.failure(
+                            spotify_id=track.spotify_id,
+                            reason=f"Exception during matching: {str(e)}"
+                        )
                         self._database.mark_youtube_match_failed(
                             playlist_id,
                             track.spotify_id
                         )
-                        failed += 1
-                        logger.error(
-                            format_no_match_message(
-                                track.artist,
-                                track.name,
-                                result.match_reason
-                            )
-                        )
-                    
-                    completed += 1
-                    if completed % 10 == 0 or completed == len(tracks):
-                        logger.info(
-                            format_progress_message(
-                                completed, 
-                                len(tracks), 
-                                matched, 
-                                failed
-                            )
-                        )
-                        
-                except Exception as e:
-                    logger.error(
-                        f"Error matching {track.artist} - {track.name}: {e}"
-                    )
-                    # Create failure result for exception
-                    results_map[track.spotify_id] = MatchResult.failure(
-                        spotify_id=track.spotify_id,
-                        reason=f"Exception during matching: {str(e)}"
-                    )
-                    self._database.mark_youtube_match_failed(
-                        playlist_id,
-                        track.spotify_id
-                    )
-                    failed += 1
-                    completed += 1
+                        progress_bar.update(matched=False)
+        
+        finally:
+            # Only stop the progress bar if we created it
+            if own_progress_bar:
+                progress_bar.stop()
         
         # Build results list in original order
-        results = [results_map[track.spotify_id] for track in tracks]
+        return [results_map[track.spotify_id] for track in tracks]
+
+
+    def match_tracks_phase2(
+        database: Database,
+        tracks: list[Track],
+        playlist_id: str,
+        num_threads: int = 4,
+        progress_bar: MatchingProgressBar | None = None
+    ) -> list[MatchResult]:
+        """
+        Convenience function for PHASE 2 track matching.
         
-        logger.info(
-            f"Matching complete: {matched} matched, {failed} failed "
-            f"out of {len(tracks)} tracks"
-        )
+        Args:
+            database: Database instance.
+            tracks: List of Track objects from PHASE 1.
+            playlist_id: Playlist ID for database updates.
+            num_threads: Number of parallel matching threads.
+            progress_bar: Optional existing progress bar to use.
         
-        return results
-    
+        Returns:
+            List of MatchResult objects.
+        """
+        matcher = YouTubeMatcher(database)
+        return matcher.match_tracks(tracks, playlist_id, num_threads, progress_bar)
+        
     def _search_with_retry(
         self, 
         search_func: callable, 
@@ -989,29 +976,24 @@ def match_tracks_phase2(
     database: Database,
     tracks: list[Track],
     playlist_id: str,
-    num_threads: int = 8
+    num_threads: int = 4,
+    progress_bar: MatchingProgressBar | None = None
 ) -> list[MatchResult]:
     """
     Convenience function for PHASE 2 track matching.
-    
-    This is the main entry point called by the CLI for YouTube matching.
     
     Args:
         database: Database instance.
         tracks: List of Track objects from PHASE 1.
         playlist_id: Playlist ID for database updates.
         num_threads: Number of parallel matching threads.
+        progress_bar: Optional existing progress bar to use.
     
     Returns:
         List of MatchResult objects.
-    
-    Example:
-        results = match_tracks_phase2(db, tracks, playlist_id, num_threads=4)
-        matched = sum(1 for r in results if r.matched)
-        print(f"Matched {matched}/{len(tracks)} tracks")
     """
     matcher = YouTubeMatcher(database)
-    return matcher.match_tracks(tracks, playlist_id, num_threads)
+    return matcher.match_tracks(tracks, playlist_id, num_threads, progress_bar)
 
 
 def get_tracks_needing_match(

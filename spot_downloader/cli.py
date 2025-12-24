@@ -530,35 +530,20 @@ def _run_phase2(
         tracks: Tracks from PHASE 1 (None if running phase separately).
         num_threads: Number of parallel matching threads.
         force_rematch: If True, reset failed matches before processing.
-    
-    Behavior:
-        1. Log phase start
-        2. If force_rematch, reset failed matches in database
-        3. If tracks is None, get tracks needing match from database
-           and convert from dict to Track objects
-        4. If playlist_id is None, group tracks by playlist and process each
-        5. Run matcher with threading
-        6. Log match statistics
-    
-    Type Conversion:
-        When tracks is None (running phase 2 separately), tracks are
-        retrieved from the database as list[dict[str, Any]]. These are
-        converted to list[Track] using Track.from_database_dict() before
-        passing to the matcher.
     """
+    from spot_downloader.core.progress import MatchingProgressBar
+    
     logger.info("=" * 60)
     logger.info("PHASE 2: Matching tracks on YouTube Music")
     logger.info("=" * 60)
     
-    # Handle force_rematch: reset failed matches to allow re-processing
+    # Handle force_rematch
     if force_rematch:
         if playlist_id is not None:
             reset_count = database.reset_failed_matches(playlist_id)
             if reset_count > 0:
                 logger.info(f"Reset {reset_count} failed matches for re-matching")
         else:
-            # Reset for all playlists - would need a new method
-            # For now, skip this when processing all playlists
             logger.warning("--force-rematch with all playlists not yet supported")
     
     # Get tracks to process
@@ -583,41 +568,23 @@ def _run_phase2(
             total_tracks = len(track_dicts)
             logger.info(f"Found {total_tracks} tracks needing match across {playlist_count} playlists")
             
-            # Process each playlist
-            total_matched = 0
-            total_failed = 0
+            # Create ONE progress bar for ALL tracks
+            with MatchingProgressBar(total=total_tracks, description="Matching") as pbar:
+                # Process each playlist
+                for pl_id, pl_track_dicts in tracks_by_playlist.items():
+                    # Convert dict to Track objects
+                    pl_tracks = [
+                        Track.from_database_dict(d["track_id"], d)
+                        for d in pl_track_dicts
+                    ]
+                    
+                    # Run matching for this playlist, using the shared progress bar
+                    match_tracks_phase2(database, pl_tracks, pl_id, num_threads, pbar)
             
-            for pl_id, pl_track_dicts in tracks_by_playlist.items():
-                playlist_info = database.get_playlist_info(pl_id)
-                playlist_name = playlist_info["name"] if playlist_info else pl_id
-                logger.info(f"Processing playlist: {playlist_name} ({len(pl_track_dicts)} tracks)")
-                
-                # Convert dict to Track objects
-                pl_tracks = [
-                    Track.from_database_dict(d["track_id"], d)
-                    for d in pl_track_dicts
-                ]
-                
-                # Run matching for this playlist
-                results = match_tracks_phase2(database, pl_tracks, pl_id, num_threads)
-                
-                matched = sum(1 for r in results if r.matched)
-                failed = len(results) - matched
-                total_matched += matched
-                total_failed += failed
-                
-                logger.info(f"  Matched: {matched}/{len(results)}")
-            
-            # Final summary
-            logger.info("-" * 40)
-            logger.info(f"Total matched: {total_matched}/{total_tracks} tracks")
-            if total_failed > 0:
-                logger.info(f"Total failed:  {total_failed} tracks (see log for details)")
             logger.info("PHASE 2 complete")
             return
         
         # Single playlist mode
-        # Convert dict to Track objects using from_database_dict
         tracks = [
             Track.from_database_dict(d["track_id"], d)
             for d in track_dicts
@@ -625,7 +592,6 @@ def _run_phase2(
         logger.info(f"Found {len(tracks)} tracks needing match in database")
     else:
         # Tracks from phase 1 - filter to only those needing match
-        # (in case some were already matched in a previous run)
         existing_matched = set()
         for t in tracks:
             track_data = database.get_track(playlist_id, t.spotify_id)
@@ -643,17 +609,9 @@ def _run_phase2(
     
     logger.info(f"Matching {len(tracks)} tracks using {num_threads} threads")
     
-    # Run matching
-    results = match_tracks_phase2(database, tracks, playlist_id, num_threads)
+    # Run matching (will create its own progress bar)
+    match_tracks_phase2(database, tracks, playlist_id, num_threads)
     
-    # Log summary statistics
-    matched = sum(1 for r in results if r.matched)
-    failed = len(results) - matched
-    
-    logger.info("-" * 40)
-    logger.info(f"Matched: {matched}/{len(results)} tracks")
-    if failed > 0:
-        logger.info(f"Failed:  {failed} tracks (see log for details)")
     logger.info("PHASE 2 complete")
 
 
