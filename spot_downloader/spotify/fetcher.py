@@ -40,28 +40,25 @@ from spot_downloader.spotify.models import LikedSongs, Playlist, Track
 logger = get_logger(__name__)
 
 
-def _assign_track_numbers(tracks: list[Track], existing_max: int = 0) -> list[Track]:
+def _assign_track_numbers(tracks: list[Track]) -> list[Track]:
     """
-    Assign position numbers based on chronological order of addition.
+    Assign position numbers based on Spotify's order.
     
-    Tracks are sorted by added_at (oldest first) and assigned sequential
-    numbers starting from existing_max + 1.
+    Tracks are assigned sequential numbers based on their position
+    in the array (which reflects Spotify's order).
+    
+    For playlists: position 1 = first track in playlist
+    For Liked Songs: position 1 = most recently liked (top of list)
     
     Args:
-        tracks: List of Track objects with added_at field.
-        existing_max: Highest position already in database (for sync mode).
+        tracks: List of Track objects in Spotify order.
     
     Returns:
         New list of Track objects with assigned_number set.
     """
-    sorted_tracks = sorted(
-        tracks,
-        key=lambda t: t.added_at or "9999-99-99T99:99:99Z"
-    )
-    
     return [
-        replace(track, assigned_number=existing_max + i + 1)
-        for i, track in enumerate(sorted_tracks)
+        replace(track, assigned_number=i + 1)
+        for i, track in enumerate(tracks)
     ]
 
 
@@ -128,36 +125,43 @@ class SpotifyFetcher:
         tracks = self._create_track_objects(valid_items, artist_map, album_map)
         logger.info(f"Successfully parsed {len(tracks)} tracks")
         
-        # 6. Assign position numbers
+        # 6. Get existing track IDs BEFORE modifying database (for sync mode filtering)
         if sync_mode:
-            existing_max = self._database.get_max_position(playlist_id)
-            # Get existing track IDs BEFORE storing new tracks
             existing_track_ids = self._database.get_playlist_track_ids(playlist_id)
         else:
-            existing_max = 0
             existing_track_ids = set()
-        tracks = _assign_track_numbers(tracks, existing_max)
         
-        # 7. Create/update playlist in database
+        # 7. Assign position numbers based on Spotify order
+        tracks = _assign_track_numbers(tracks)
+        
+        # 8. Create/update playlist in database
         self._database.add_playlist(
             playlist_id=playlist_id,
             spotify_url=playlist_data.get("external_urls", {}).get("spotify", playlist_url),
             name=playlist_name
         )
         
-        # 8. Store tracks in Global Track Registry
+        # 9. Store tracks in Global Track Registry (updates positions for existing tracks)
         self._store_tracks(tracks, playlist_id)
         
-        # 9. Filter for sync mode (using pre-stored existing IDs)
+        # 10. Remove orphaned links (tracks removed from Spotify playlist)
+        valid_ids = {t.spotify_id for t in tracks}
+        removed = self._database.sync_playlist_tracks(playlist_id, valid_ids)
+        if removed > 0:
+            logger.info(f"Removed {removed} tracks no longer in playlist")
+        
+        # 11. Filter for sync mode (return only NEW tracks for phases 2-5)
         if sync_mode:
             new_tracks = [t for t in tracks if t.spotify_id not in existing_track_ids]
             logger.info(f"Sync mode: {len(new_tracks)} new tracks to process")
-            tracks = new_tracks
+            tracks_for_phases = new_tracks
+        else:
+            tracks_for_phases = tracks
         
-        # 10. Create Playlist object
+        # 11. Create Playlist object
         playlist = Playlist.from_spotify_api(playlist_data, tracks)
         
-        return playlist, tracks
+        return playlist, tracks_for_phases
     
     def fetch_liked_songs(self, sync_mode: bool = False) -> tuple[LikedSongs, list[Track]]:
         """
@@ -197,32 +201,40 @@ class SpotifyFetcher:
         tracks = self._create_track_objects(valid_items, artist_map, album_map)
         logger.info(f"Successfully parsed {len(tracks)} tracks")
         
-        # 5. Assign position numbers
+        # 5. Get existing track IDs BEFORE modifying database (for sync mode filtering)
         if sync_mode:
-            existing_max = self._database.get_max_position(LIKED_SONGS_KEY)
-            # Get existing track IDs BEFORE storing new tracks
             existing_track_ids = self._database.get_liked_songs_track_ids()
         else:
-            existing_max = 0
             existing_track_ids = set()
-        tracks = _assign_track_numbers(tracks, existing_max)
         
-        # 6. Ensure liked_songs entry exists
+        # 6. Assign position numbers based on Spotify order
+        # For Liked Songs: position 1 = most recently liked (top of list)
+        tracks = _assign_track_numbers(tracks)
+        
+        # 7. Ensure liked_songs entry exists
         self._database.ensure_liked_songs_exists()
         
-        # 7. Store tracks in Global Track Registry
+        # 8. Store tracks in Global Track Registry (updates positions for existing tracks)
         self._store_tracks(tracks, LIKED_SONGS_KEY)
         
-        # 8. Filter for sync mode (using pre-stored existing IDs)
+        # 9. Remove orphaned links (tracks removed from Liked Songs)
+        valid_ids = {t.spotify_id for t in tracks}
+        removed = self._database.sync_playlist_tracks(LIKED_SONGS_KEY, valid_ids)
+        if removed > 0:
+            logger.info(f"Removed {removed} tracks no longer in Liked Songs")
+        
+        # 10. Filter for sync mode (return only NEW tracks for phases 2-5)
         if sync_mode:
             new_tracks = [t for t in tracks if t.spotify_id not in existing_track_ids]
             logger.info(f"Sync mode: {len(new_tracks)} new tracks to process")
-            tracks = new_tracks
+            tracks_for_phases = new_tracks
+        else:
+            tracks_for_phases = tracks
         
-        # 9. Create LikedSongs object
+        # 11. Create LikedSongs object
         liked_songs = LikedSongs.from_spotify_api(tracks, total_count)
         
-        return liked_songs, tracks
+        return liked_songs, tracks_for_phases
     
     # =========================================================================
     # Private Helper Methods

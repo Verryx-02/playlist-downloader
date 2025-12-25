@@ -790,3 +790,191 @@ class Database:
                 )
                 
                 return stats
+    
+    # =========================================================================
+    # Sync Change Detection & Playlist Management
+    # =========================================================================
+    
+    def get_playlist_tracks_snapshot(self, playlist_id: str) -> dict[str, int]:
+        """
+        Get current state of playlist as {spotify_track_id: position}.
+        
+        Used for sync change detection to compare with Spotify's current state.
+        
+        Args:
+            playlist_id: Spotify playlist ID.
+        
+        Returns:
+            Dictionary mapping spotify_id to position for all tracks in playlist.
+        """
+        with self._lock:
+            with self._get_connection() as conn:
+                db_id = self._get_playlist_db_id(conn, playlist_id)
+                if db_id is None:
+                    return {}
+                
+                cursor = conn.execute("""
+                    SELECT g.spotify_id, pt.position
+                    FROM global_tracks g
+                    JOIN playlist_tracks pt ON g.id = pt.track_id
+                    WHERE pt.playlist_id = ?
+                """, (db_id,))
+                
+                return {row[0]: row[1] for row in cursor.fetchall()}
+    
+    def clear_playlist_tracks(self, playlist_id: str) -> int:
+        """
+        Remove all track links for a playlist.
+        
+        The global_tracks entries are preserved (tracks may still be in other
+        playlists). Only the playlist_tracks junction entries are deleted.
+        
+        Args:
+            playlist_id: Spotify playlist ID.
+        
+        Returns:
+            Number of links removed.
+        """
+        with self._lock:
+            with self._get_connection() as conn:
+                db_id = self._get_playlist_db_id(conn, playlist_id)
+                if db_id is None:
+                    return 0
+                
+                cursor = conn.execute(
+                    "DELETE FROM playlist_tracks WHERE playlist_id = ?", (db_id,)
+                )
+                conn.commit()
+                return cursor.rowcount
+    
+    def delete_playlist(self, playlist_id: str) -> bool:
+        """
+        Delete a playlist and all its track links.
+        
+        The global_tracks entries are preserved (tracks may still be in other
+        playlists). The cascade delete removes playlist_tracks entries.
+        
+        Args:
+            playlist_id: Spotify playlist ID.
+        
+        Returns:
+            True if playlist existed and was deleted, False otherwise.
+        """
+        with self._lock:
+            with self._get_connection() as conn:
+                cursor = conn.execute(
+                    "DELETE FROM playlists WHERE spotify_id = ?", (playlist_id,)
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+    
+    def get_playlist_tracks_for_export(self, playlist_id: str) -> list[dict[str, Any]]:
+        """
+        Get tracks with all info needed for M3U export.
+        
+        Returns only downloaded tracks with their file paths.
+        
+        Args:
+            playlist_id: Spotify playlist ID.
+        
+        Returns:
+            List of dicts with: position, name, artist, duration_ms, file_path
+            Ordered by position.
+        """
+        with self._lock:
+            with self._get_connection() as conn:
+                db_id = self._get_playlist_db_id(conn, playlist_id)
+                if db_id is None:
+                    return []
+                
+                cursor = conn.execute("""
+                    SELECT pt.position, g.name, g.artist, g.duration_ms, g.file_path
+                    FROM global_tracks g
+                    JOIN playlist_tracks pt ON g.id = pt.track_id
+                    WHERE pt.playlist_id = ? AND g.downloaded = 1 AND g.file_path IS NOT NULL
+                    ORDER BY pt.position
+                """, (db_id,))
+                
+                return [
+                    {
+                        "position": row[0],
+                        "name": row[1],
+                        "artist": row[2],
+                        "duration_ms": row[3],
+                        "file_path": row[4]
+                    }
+                    for row in cursor.fetchall()
+                ]
+    
+    def get_all_downloaded_tracks(self) -> list[dict[str, Any]]:
+        """
+        Get all downloaded tracks for export.
+        
+        Returns:
+            List of dicts with: spotify_id, name, artist, file_path
+        """
+        with self._lock:
+            with self._get_connection() as conn:
+                cursor = conn.execute("""
+                    SELECT spotify_id, name, artist, file_path
+                    FROM global_tracks
+                    WHERE downloaded = 1 AND file_path IS NOT NULL
+                    ORDER BY artist, name
+                """)
+                
+                return [
+                    {
+                        "spotify_id": row[0],
+                        "name": row[1],
+                        "artist": row[2],
+                        "file_path": row[3]
+                    }
+                    for row in cursor.fetchall()
+                ]
+    
+    def sync_playlist_tracks(
+        self,
+        playlist_id: str,
+        valid_spotify_ids: set[str]
+    ) -> int:
+        """
+        Remove playlist_tracks entries for tracks no longer in the playlist.
+        
+        Called after storing tracks to remove orphaned links (tracks that
+        were removed from the Spotify playlist).
+        
+        Args:
+            playlist_id: Spotify playlist ID.
+            valid_spotify_ids: Set of spotify_ids that SHOULD be in the playlist.
+        
+        Returns:
+            Number of orphaned links removed.
+        """
+        with self._lock:
+            with self._get_connection() as conn:
+                db_id = self._get_playlist_db_id(conn, playlist_id)
+                if db_id is None:
+                    return 0
+                
+                # Find track_ids that are in playlist_tracks but not in valid_spotify_ids
+                # and delete them
+                if not valid_spotify_ids:
+                    # If no valid IDs, remove all links
+                    cursor = conn.execute(
+                        "DELETE FROM playlist_tracks WHERE playlist_id = ?",
+                        (db_id,)
+                    )
+                else:
+                    # Build placeholders for IN clause
+                    placeholders = ",".join("?" for _ in valid_spotify_ids)
+                    cursor = conn.execute(f"""
+                        DELETE FROM playlist_tracks 
+                        WHERE playlist_id = ? 
+                        AND track_id NOT IN (
+                            SELECT id FROM global_tracks 
+                            WHERE spotify_id IN ({placeholders})
+                        )
+                    """, (db_id, *valid_spotify_ids))
+                
+                conn.commit()
+                return cursor.rowcount

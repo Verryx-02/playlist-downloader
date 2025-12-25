@@ -373,3 +373,226 @@ class FileManager:
     def file_exists_in_tracks(self, artist: str, title: str) -> bool:
         """Check if a track file already exists."""
         return self.get_canonical_path(artist, title).exists()
+    
+    # =========================================================================
+    # Sync Rebuild Operations
+    # =========================================================================
+    
+    def delete_playlist_directory(self, playlist_name: str) -> bool:
+        """
+        Delete a playlist directory and all its contents.
+        
+        Since playlist directories contain only hard links (not actual files),
+        this operation is very fast and doesn't delete any audio data.
+        
+        Args:
+            playlist_name: Human-readable playlist name.
+        
+        Returns:
+            True if directory existed and was deleted, False otherwise.
+        """
+        import shutil
+        
+        safe_name = sanitize_filename(playlist_name)
+        playlist_dir = self.output_dir / safe_name
+        
+        if not playlist_dir.exists():
+            return False
+        
+        shutil.rmtree(playlist_dir)
+        return True
+    
+    def rebuild_playlist_from_tracks(
+        self,
+        playlist_name: str,
+        tracks: list[dict]
+    ) -> int:
+        """
+        Recreate playlist directory with correct hard links.
+        
+        Deletes existing directory and creates new links based on
+        the provided track list.
+        
+        Args:
+            playlist_name: Human-readable playlist name.
+            tracks: List of dicts with: position, name, artist, file_path
+                   (from Database.get_playlist_tracks_for_export)
+        
+        Returns:
+            Number of links successfully created.
+        """
+        # Delete existing directory
+        self.delete_playlist_directory(playlist_name)
+        
+        # Create new links
+        created = 0
+        for track in tracks:
+            canonical_path = Path(track["file_path"])
+            if not canonical_path.exists():
+                continue
+            
+            try:
+                self.create_playlist_link(
+                    canonical_path=canonical_path,
+                    playlist_name=playlist_name,
+                    position=track["position"],
+                    title=track["name"],
+                    artist=track["artist"]
+                )
+                created += 1
+            except Exception:
+                pass
+        
+        return created
+    
+    # =========================================================================
+    # Export Operations
+    # =========================================================================
+    
+    def export_playlist_m3u(
+        self,
+        playlist_name: str,
+        tracks: list[dict],
+        export_dir: Path,
+        tracks_subdir: str = "tracks"
+    ) -> Path:
+        """
+        Generate extended M3U playlist file.
+        
+        Creates an M3U file with #EXTINF metadata for each track.
+        The M3U references tracks in a relative 'tracks/' subdirectory.
+        
+        Args:
+            playlist_name: Human-readable playlist name.
+            tracks: List of dicts with: position, name, artist, duration_ms, file_path
+            export_dir: Directory where M3U file will be created.
+            tracks_subdir: Subdirectory name for tracks (default: "tracks").
+        
+        Returns:
+            Path to the created M3U file.
+        """
+        export_dir.mkdir(parents=True, exist_ok=True)
+        
+        safe_name = sanitize_filename(playlist_name)
+        m3u_path = export_dir / f"{safe_name}.m3u"
+        
+        with open(m3u_path, "w", encoding="utf-8") as f:
+            # Extended M3U header
+            f.write("#EXTM3U\n")
+            
+            for track in tracks:
+                # Duration in seconds (M3U uses seconds, not milliseconds)
+                duration_sec = (track.get("duration_ms") or 0) // 1000
+                
+                artist = track.get("artist", "Unknown")
+                name = track.get("name", "Unknown")
+                
+                # Get just the filename from the canonical path
+                canonical_path = Path(track["file_path"])
+                filename = canonical_path.name
+                
+                # #EXTINF:duration,Artist - Title
+                f.write(f"#EXTINF:{duration_sec},{artist} - {name}\n")
+                # Relative path to track
+                f.write(f"{tracks_subdir}/{filename}\n")
+        
+        return m3u_path
+    
+    def export_playlist_copy(
+        self,
+        playlist_name: str,
+        tracks: list[dict],
+        export_dir: Path
+    ) -> tuple[Path, int]:
+        """
+        Export playlist as folder with actual file copies.
+        
+        Creates a playlist folder with numbered copies of the audio files.
+        
+        Args:
+            playlist_name: Human-readable playlist name.
+            tracks: List of dicts with: position, name, artist, file_path
+            export_dir: Base export directory.
+        
+        Returns:
+            Tuple of (playlist_folder_path, number_of_files_copied).
+        """
+        import shutil
+        
+        safe_name = sanitize_filename(playlist_name)
+        playlist_folder = export_dir / safe_name
+        playlist_folder.mkdir(parents=True, exist_ok=True)
+        
+        copied = 0
+        for track in tracks:
+            src_path = Path(track["file_path"])
+            if not src_path.exists():
+                continue
+            
+            # Generate position-prefixed filename
+            dest_filename = self.get_playlist_filename(
+                position=track["position"],
+                title=track["name"],
+                artist=track["artist"]
+            )
+            dest_path = playlist_folder / dest_filename
+            
+            try:
+                shutil.copy2(src_path, dest_path)
+                copied += 1
+            except Exception:
+                pass
+        
+        return playlist_folder, copied
+    
+    def copy_tracks_to_export(
+        self,
+        tracks: list[dict],
+        export_dir: Path,
+        tracks_subdir: str = "tracks"
+    ) -> int:
+        """
+        Copy master audio files to export directory.
+        
+        Used for M3U export to create the tracks/ folder with actual files.
+        
+        Args:
+            tracks: List of dicts with file_path key.
+            export_dir: Base export directory.
+            tracks_subdir: Subdirectory name for tracks (default: "tracks").
+        
+        Returns:
+            Number of files successfully copied.
+        """
+        import shutil
+        
+        tracks_folder = export_dir / tracks_subdir
+        tracks_folder.mkdir(parents=True, exist_ok=True)
+        
+        copied = 0
+        seen_files: set[str] = set()
+        
+        for track in tracks:
+            src_path = Path(track["file_path"])
+            if not src_path.exists():
+                continue
+            
+            # Skip duplicates (same track in multiple playlists)
+            if src_path.name in seen_files:
+                continue
+            seen_files.add(src_path.name)
+            
+            dest_path = tracks_folder / src_path.name
+            
+            # Skip if already exists (from previous export)
+            if dest_path.exists():
+                copied += 1
+                continue
+            
+            try:
+                shutil.copy2(src_path, dest_path)
+                copied += 1
+            except Exception:
+                pass
+        
+        return copied

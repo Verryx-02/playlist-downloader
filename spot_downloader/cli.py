@@ -88,6 +88,10 @@ click.rich_click.OPTION_GROUPS = {
             "options": ["--sync", "--no-liked"],
         },
         {
+            "name": "Export Options",
+            "options": ["--export", "--copy-files"],
+        },
+        {
             "name": "Phase Selection",
             "options": ["--1", "--2", "--3", "--4", "--5"],
         },
@@ -107,6 +111,7 @@ from spot_downloader.core import (
     ConfigError,
     Database,
     DatabaseError,
+    FileManager,
     SpotDownloaderError,
     SpotifyError,
     get_logger,
@@ -186,6 +191,20 @@ __version__ = "0.2.0"
     help="PHASE 5: Embed metadata and lyrics"
 )
 @click.option(
+    "--export",
+    type=str,
+    default=None,
+    is_flag=False,
+    flag_value="__ALL__",
+    metavar="[playlist-name]",
+    help="Export playlists as M3U (all if no name given)"
+)
+@click.option(
+    "--copy-files",
+    is_flag=True,
+    help="Export as folder copies instead of M3U"
+)
+@click.option(
     "--replace",
     nargs=2,
     type=(click.Path(exists=True, path_type=Path), str),
@@ -222,6 +241,8 @@ def cli(
     phase3_only: bool,
     phase4_only: bool,
     phase5_only: bool,
+    export: Optional[str],
+    copy_files: bool,
     replace: Optional[tuple[Path, str]],
     cookie_file: Optional[Path],
     force_rematch: bool,
@@ -248,6 +269,13 @@ def cli(
         (removed tracks, position changes). Prompts before applying changes locally.
     
     \b
+    EXPORT:
+        spot --export                          # Export all playlists as M3U
+        spot --export "My Playlist"            # Export single playlist as M3U
+        spot --export --copy-files             # Export all as folder copies
+        spot --export "My Playlist" --copy-files  # Export single as folder copy
+    
+    \b
     PHASE-BY-PHASE:
         spot --1 --url "https://..."           # Fetch Spotify metadata only
         spot --2                               # Match on YouTube Music only
@@ -265,10 +293,19 @@ def cli(
         click.echo(f"spot-downloader {__version__}")
         ctx.exit(0)
     
+    # Handle --export (standalone operation)
+    if export is not None:
+        _handle_export(export, copy_files)
+        ctx.exit(0)
+    
     # Handle --replace (standalone operation)
     if replace:
         _handle_replace(replace, cookie_file)
         ctx.exit(0)
+    
+    # --copy-files only makes sense with --export
+    if copy_files:
+        raise click.UsageError("--copy-files can only be used with --export")
     
     # Phase flags
     phase_flags = [phase1_only, phase2_only, phase3_only, phase4_only, phase5_only]
@@ -420,7 +457,8 @@ def _run_download(options: dict) -> None:
         if options.get("sync_all"):
             tracks = _run_sync_all(
                 database=database,
-                include_liked=not options.get("no_liked", False)
+                include_liked=not options.get("no_liked", False),
+                output_dir=config.output.directory
             )
             # After sync_all, we don't need to run phase1 again
             # and playlist_id stays None (phases work globally)
@@ -618,23 +656,33 @@ def _run_phase1(
     return list(tracks)
 
 
-def _run_sync_all(database: Database, include_liked: bool = True) -> list[Track]:
+def _run_sync_all(
+    database: Database, 
+    include_liked: bool = True,
+    output_dir: Path | None = None
+) -> list[Track]:
     """
     Sync all known playlists (and optionally Liked Songs).
     
     This is the main function for `spot --sync` without --url or --liked.
-    It fetches metadata for all playlists previously added to the database.
+    It fetches metadata for all playlists previously added to the database,
+    detects changes (removed tracks, position changes), and prompts for rebuild.
     
     Args:
         database: Database instance.
         include_liked: Whether to also sync Liked Songs (requires user auth).
+        output_dir: Output directory for FileManager (needed for rebuild).
     
     Returns:
         Combined list of new Track objects from all playlists.
     
     Behavior:
         1. Get all playlists from database
-        2. For each playlist, run Phase 1 in sync mode
+        2. For each playlist:
+           a. Take snapshot of current state
+           b. Run Phase 1 in sync mode
+           c. Detect changes (removals, position changes)
+           d. If changes found, prompt user and rebuild if confirmed
         3. If include_liked, also sync Liked Songs
         4. Return combined list of new tracks
     """
@@ -652,10 +700,12 @@ def _run_sync_all(database: Database, include_liked: bool = True) -> list[Track]
         return []
     
     all_new_tracks: list[Track] = []
+    file_manager = FileManager(output_dir) if output_dir else None
     
     # Sync each playlist
     for i, playlist_info in enumerate(playlists, 1):
         spotify_url = playlist_info.get("spotify_url")
+        playlist_id = playlist_info["spotify_id"]
         name = playlist_info.get("name", "Unknown")
         
         if not spotify_url:
@@ -663,6 +713,9 @@ def _run_sync_all(database: Database, include_liked: bool = True) -> list[Track]
             continue
         
         logger.info(f"[{i}/{len(playlists)}] Syncing: {name}")
+        
+        # Take snapshot BEFORE sync
+        snapshot_before = database.get_playlist_tracks_snapshot(playlist_id)
         
         try:
             playlist, tracks = fetch_playlist_phase1(
@@ -672,17 +725,57 @@ def _run_sync_all(database: Database, include_liked: bool = True) -> list[Track]
             )
             all_new_tracks.extend(tracks)
             logger.info(f"  → {len(tracks)} new tracks")
+            
+            # Take snapshot AFTER sync
+            snapshot_after = database.get_playlist_tracks_snapshot(playlist_id)
+            
+            # Detect changes
+            changes = _detect_playlist_changes(snapshot_before, snapshot_after, name)
+            
+            if changes["has_changes"] and file_manager:
+                _handle_playlist_changes(
+                    database=database,
+                    file_manager=file_manager,
+                    playlist_id=playlist_id,
+                    playlist_name=name,
+                    changes=changes
+                )
+                
         except Exception as e:
             logger.error(f"  → Failed to sync '{name}': {e}")
             continue
     
+    # Check for deleted playlists (playlists in DB but not on Spotify)
+    # This would require fetching user's playlists from Spotify API
+    # For now, we skip this feature as it requires additional API calls
+    
     # Sync Liked Songs if requested
     if include_liked:
         logger.info(f"Syncing: Liked Songs")
+        
+        # Take snapshot BEFORE sync
+        snapshot_before = database.get_playlist_tracks_snapshot(LIKED_SONGS_KEY)
+        
         try:
             liked_songs, tracks = fetch_liked_songs_phase1(database, sync_mode=True)
             all_new_tracks.extend(tracks)
             logger.info(f"  → {len(tracks)} new tracks")
+            
+            # Take snapshot AFTER sync
+            snapshot_after = database.get_playlist_tracks_snapshot(LIKED_SONGS_KEY)
+            
+            # Detect changes
+            changes = _detect_playlist_changes(snapshot_before, snapshot_after, "Liked Songs")
+            
+            if changes["has_changes"] and file_manager:
+                _handle_playlist_changes(
+                    database=database,
+                    file_manager=file_manager,
+                    playlist_id=LIKED_SONGS_KEY,
+                    playlist_name="Liked Songs",
+                    changes=changes
+                )
+                
         except Exception as e:
             logger.error(f"  → Failed to sync Liked Songs: {e}")
     
@@ -690,6 +783,99 @@ def _run_sync_all(database: Database, include_liked: bool = True) -> list[Track]
     logger.info(f"SYNC ALL complete: {len(all_new_tracks)} total new tracks")
     
     return all_new_tracks
+
+
+def _detect_playlist_changes(
+    before: dict[str, int],
+    after: dict[str, int],
+    playlist_name: str
+) -> dict:
+    """
+    Detect changes between two playlist snapshots.
+    
+    Args:
+        before: Snapshot before sync {spotify_id: position}
+        after: Snapshot after sync {spotify_id: position}
+        playlist_name: For logging purposes
+    
+    Returns:
+        Dict with:
+            - has_changes: bool
+            - removed_tracks: list of spotify_ids removed
+            - position_changes: list of (spotify_id, old_pos, new_pos)
+            - added_tracks: list of spotify_ids added
+    """
+    removed = []
+    position_changes = []
+    added = []
+    
+    # Find removed tracks
+    for track_id in before:
+        if track_id not in after:
+            removed.append(track_id)
+    
+    # Find added tracks and position changes
+    for track_id, new_pos in after.items():
+        if track_id not in before:
+            added.append(track_id)
+        elif before[track_id] != new_pos:
+            position_changes.append((track_id, before[track_id], new_pos))
+    
+    has_changes = bool(removed or position_changes)
+    
+    return {
+        "has_changes": has_changes,
+        "removed_tracks": removed,
+        "position_changes": position_changes,
+        "added_tracks": added
+    }
+
+
+def _handle_playlist_changes(
+    database: Database,
+    file_manager: FileManager,
+    playlist_id: str,
+    playlist_name: str,
+    changes: dict
+) -> None:
+    """
+    Handle detected playlist changes with user confirmation.
+    
+    The database has already been updated by the fetcher to match Spotify.
+    This function only rebuilds the local playlist directory if the user confirms.
+    
+    Args:
+        database: Database instance
+        file_manager: FileManager instance
+        playlist_id: Spotify playlist ID
+        playlist_name: Human-readable playlist name
+        changes: Dict from _detect_playlist_changes
+    """
+    # Report changes
+    logger.info(f"  Changes detected in '{playlist_name}':")
+    
+    if changes["removed_tracks"]:
+        logger.info(f"    - {len(changes['removed_tracks'])} tracks removed")
+    
+    if changes["position_changes"]:
+        logger.info(f"    - {len(changes['position_changes'])} tracks moved")
+    
+    # Ask for confirmation
+    if not click.confirm(f"  Rebuild local playlist '{playlist_name}'?"):
+        logger.info(f"  Skipping rebuild for '{playlist_name}'")
+        return
+    
+    # Get tracks from database (already updated by fetcher)
+    tracks = database.get_playlist_tracks_for_export(playlist_id)
+    
+    if tracks:
+        # Rebuild the playlist directory with correct hard links
+        created = file_manager.rebuild_playlist_from_tracks(playlist_name, tracks)
+        logger.info(f"  Rebuilt playlist directory with {created} tracks")
+    else:
+        # No downloaded tracks, just delete the directory
+        file_manager.delete_playlist_directory(playlist_name)
+        logger.info(f"  Removed empty playlist directory")
 
 
 def _run_phase2(
@@ -916,6 +1102,154 @@ def _handle_replace(replace_args: tuple[Path, str], cookie_file: Path | None) ->
         It works on any M4A file produced by this application.
     """
     raise NotImplementedError("Contract only - implementation pending")
+
+
+def _handle_export(export_arg: str, copy_files: bool) -> None:
+    """
+    Handle the --export standalone operation.
+    
+    Exports playlists as M3U files (default) or folder copies (--copy-files).
+    
+    Args:
+        export_arg: Playlist name to export, or "__ALL__" for all playlists.
+        copy_files: If True, create folder copies instead of M3U files.
+    
+    Behavior:
+        1. Load configuration
+        2. Initialize database
+        3. Get playlist(s) to export
+        4. For each playlist:
+           - Get downloaded tracks
+           - Either create M3U file or copy files to export directory
+        5. Report export location to user
+    
+    Output Structure (M3U mode):
+        export_directory/
+        ├── tracks/
+        │   ├── Queen-Bohemian Rhapsody.m4a
+        │   └── ...
+        ├── My Playlist.m3u
+        └── Another Playlist.m3u
+    
+    Output Structure (copy-files mode):
+        export_directory/
+        ├── My Playlist/
+        │   ├── 00001-Bohemian Rhapsody-Queen.m4a
+        │   └── ...
+        └── Another Playlist/
+            └── ...
+    """
+    try:
+        # Load configuration
+        config = load_config()
+        export_dir = config.output.export_directory
+        
+        # Initialize database
+        db_path = config.output.directory / "database.db"
+        if not db_path.exists():
+            click.echo("No database found. Run a download first.", err=True)
+            sys.exit(1)
+        
+        database = Database(db_path)
+        file_manager = FileManager(config.output.directory)
+        
+        # Get playlists to export
+        all_playlists = database.get_all_playlists()
+        
+        if not all_playlists:
+            click.echo("No playlists found in database.", err=True)
+            sys.exit(1)
+        
+        # Filter to specific playlist if requested
+        if export_arg != "__ALL__":
+            playlists_to_export = [
+                p for p in all_playlists 
+                if p.get("name", "").lower() == export_arg.lower()
+            ]
+            if not playlists_to_export:
+                click.echo(f"Playlist not found: {export_arg}", err=True)
+                click.echo("Available playlists:")
+                for p in all_playlists:
+                    click.echo(f"  - {p.get('name', 'Unknown')}")
+                sys.exit(1)
+        else:
+            playlists_to_export = all_playlists
+        
+        # Create export directory
+        export_dir.mkdir(parents=True, exist_ok=True)
+        
+        click.echo(f"Exporting {len(playlists_to_export)} playlist(s)...")
+        
+        if copy_files:
+            # Export as folder copies
+            total_files = 0
+            for playlist in playlists_to_export:
+                playlist_id = playlist["spotify_id"]
+                playlist_name = playlist.get("name", "Unknown")
+                
+                tracks = database.get_playlist_tracks_for_export(playlist_id)
+                if not tracks:
+                    click.echo(f"  Skipping '{playlist_name}' (no downloaded tracks)")
+                    continue
+                
+                folder_path, copied = file_manager.export_playlist_copy(
+                    playlist_name=playlist_name,
+                    tracks=tracks,
+                    export_dir=export_dir
+                )
+                total_files += copied
+                click.echo(f"  Exported '{playlist_name}': {copied} files")
+            
+            click.echo("")
+            click.echo(f"Export complete: {total_files} files copied")
+        else:
+            # Export as M3U files
+            # First, collect all tracks to copy
+            all_tracks: list[dict] = []
+            for playlist in playlists_to_export:
+                playlist_id = playlist["spotify_id"]
+                tracks = database.get_playlist_tracks_for_export(playlist_id)
+                all_tracks.extend(tracks)
+            
+            if not all_tracks:
+                click.echo("No downloaded tracks to export.", err=True)
+                sys.exit(1)
+            
+            # Copy tracks to export/tracks/
+            copied = file_manager.copy_tracks_to_export(all_tracks, export_dir)
+            click.echo(f"Copied {copied} unique tracks to {export_dir / 'tracks'}")
+            
+            # Create M3U files
+            for playlist in playlists_to_export:
+                playlist_id = playlist["spotify_id"]
+                playlist_name = playlist.get("name", "Unknown")
+                
+                tracks = database.get_playlist_tracks_for_export(playlist_id)
+                if not tracks:
+                    click.echo(f"  Skipping '{playlist_name}' (no downloaded tracks)")
+                    continue
+                
+                m3u_path = file_manager.export_playlist_m3u(
+                    playlist_name=playlist_name,
+                    tracks=tracks,
+                    export_dir=export_dir
+                )
+                click.echo(f"  Created '{m3u_path.name}': {len(tracks)} tracks")
+            
+            click.echo("")
+            click.echo(f"Export complete: M3U playlists created")
+        
+        click.echo(f"Location: {export_dir}")
+        
+    except ConfigError as e:
+        click.echo(f"Configuration error: {e.message}", err=True)
+        sys.exit(1)
+    except DatabaseError as e:
+        click.echo(f"Database error: {e.message}", err=True)
+        sys.exit(2)
+    except Exception as e:
+        click.echo(f"Export failed: {e}", err=True)
+        sys.exit(1)
 
 
 def _print_final_stats(database: Database, playlist_id: str) -> None:

@@ -7,6 +7,7 @@ application configuration stored in config.yaml.
 The configuration file contains:
     - Spotify API credentials (client_id, client_secret)
     - Output directory for downloaded files
+    - Export directory for portable playlist exports
     - Number of parallel download threads
     - Optional cookie file path for YouTube Premium quality
 
@@ -21,6 +22,7 @@ Example config.yaml:
     
     output:
       directory: "~/Desktop/Music/SpotDownloader"
+      export_directory: "~/Desktop/Music/SpotDownloader/export"
     
     download:
       threads: 4
@@ -67,10 +69,12 @@ class OutputConfig:
         directory: Absolute path to the directory where downloaded files will be saved.
                    Path expansion is performed (~ is expanded to home directory).
                    The directory will be created if it doesn't exist.
-                   
-                   Files are saved as: {directory}/{track_number}-{title}-{artist}.m4a
+        export_directory: Absolute path for --export command output.
+                         Defaults to {directory}/export if not specified.
+                         Used for portable M3U playlists and file copies.
     """
     directory: Path
+    export_directory: Path
 
 
 @dataclass(frozen=True)
@@ -109,6 +113,7 @@ class Config:
     Example:
         config = load_config()
         print(f"Saving to: {config.output.directory}")
+        print(f"Export to: {config.output.export_directory}")
         print(f"Using {config.download.threads} threads")
     """
     spotify: SpotifyConfig
@@ -221,84 +226,26 @@ def _validate_config(raw_config: dict[str, Any]) -> None:
     Raises:
         ConfigError: If validation fails, with a descriptive message
                      indicating what is missing or invalid.
-    
-    Validation Rules:
-        - 'spotify' section must exist
-        - 'spotify.client_id' must be a non-empty string
-        - 'spotify.client_secret' must be a non-empty string
-        - 'output' section must exist
-        - 'output.directory' must be a non-empty string
-        - 'download' section is optional (defaults applied)
-        - 'download.threads' if present must be integer >= 1
-        - 'download.cookie_file' if present must be string or null
     """
-    # Check spotify section
-    if "spotify" not in raw_config:
-        raise ConfigError(
-            "Missing required 'spotify' section in config.yaml",
-            details={"missing_section": "spotify"}
-        )
+    required_sections = ["spotify", "output"]
     
-    spotify = raw_config["spotify"]
-    if not isinstance(spotify, dict):
-        raise ConfigError(
-            "'spotify' section must be a dictionary",
-            details={"section": "spotify"}
-        )
-    
-    if "client_id" not in spotify:
-        raise ConfigError(
-            "Missing required field 'client_id' in spotify section",
-            details={"missing_field": "spotify.client_id"}
-        )
-    
-    if "client_secret" not in spotify:
-        raise ConfigError(
-            "Missing required field 'client_secret' in spotify section",
-            details={"missing_field": "spotify.client_secret"}
-        )
-    
-    # Check output section
-    if "output" not in raw_config:
-        raise ConfigError(
-            "Missing required 'output' section in config.yaml",
-            details={"missing_section": "output"}
-        )
-    
-    output = raw_config["output"]
-    if not isinstance(output, dict):
-        raise ConfigError(
-            "'output' section must be a dictionary",
-            details={"section": "output"}
-        )
-    
-    if "directory" not in output:
-        raise ConfigError(
-            "Missing required field 'directory' in output section",
-            details={"missing_field": "output.directory"}
-        )
-    
-    # download section is optional, but validate if present
-    download = raw_config.get("download")
-    if download is not None:
-        if not isinstance(download, dict):
+    for section in required_sections:
+        if section not in raw_config:
             raise ConfigError(
-                "'download' section must be a dictionary",
-                details={"section": "download"}
+                f"Missing required section: '{section}'",
+                details={"missing_section": section}
             )
         
-        threads = download.get("threads")
-        if threads is not None:
-            if not isinstance(threads, int) or threads < 1:
-                raise ConfigError(
-                    "'download.threads' must be a positive integer",
-                    details={"field": "download.threads", "value": threads}
-                )
+        if not isinstance(raw_config[section], dict):
+            raise ConfigError(
+                f"Section '{section}' must be a dictionary",
+                details={"section": section}
+            )
 
 
 def _parse_spotify_config(spotify_section: dict[str, Any]) -> SpotifyConfig:
     """
-    Parse and validate the spotify configuration section.
+    Parse and validate the Spotify configuration section.
     
     Args:
         spotify_section: The 'spotify' section from config.yaml.
@@ -341,7 +288,7 @@ def _parse_output_config(output_section: dict[str, Any]) -> OutputConfig:
         output_section: The 'output' section from config.yaml.
     
     Returns:
-        OutputConfig: Validated output configuration with expanded path.
+        OutputConfig: Validated output configuration with expanded paths.
     
     Raises:
         ConfigError: If directory is missing or empty.
@@ -357,7 +304,20 @@ def _parse_output_config(output_section: dict[str, Any]) -> OutputConfig:
     # Expand ~ and make absolute
     path = Path(directory.strip()).expanduser().resolve()
     
-    return OutputConfig(directory=path)
+    # Parse export_directory (optional, defaults to directory/export)
+    export_dir_raw = output_section.get("export_directory")
+    if export_dir_raw is not None:
+        if not isinstance(export_dir_raw, str) or not export_dir_raw.strip():
+            raise ConfigError(
+                "'output.export_directory' must be a non-empty string",
+                details={"field": "output.export_directory"}
+            )
+        export_path = Path(export_dir_raw.strip()).expanduser().resolve()
+    else:
+        # Default: output_directory/export
+        export_path = path / "export"
+    
+    return OutputConfig(directory=path, export_directory=export_path)
 
 
 def _parse_download_config(download_section: dict[str, Any] | None) -> DownloadConfig:
