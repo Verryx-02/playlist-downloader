@@ -70,6 +70,38 @@ from typing import Optional
 
 import rich_click as click
 
+# Configure rich-click for better help formatting
+click.rich_click.USE_RICH_MARKUP = True
+click.rich_click.SHOW_ARGUMENTS = True
+click.rich_click.GROUP_ARGUMENTS_OPTIONS = True
+click.rich_click.STYLE_ERRORS_SUGGESTION = "magenta italic"
+click.rich_click.ERRORS_SUGGESTION = ""
+click.rich_click.MAX_WIDTH = 100
+click.rich_click.OPTION_GROUPS = {
+    "cli": [
+        {
+            "name": "Input Sources",
+            "options": ["--url", "--liked"],
+        },
+        {
+            "name": "Sync Options",
+            "options": ["--sync", "--no-liked"],
+        },
+        {
+            "name": "Phase Selection",
+            "options": ["--1", "--2", "--3", "--4", "--5"],
+        },
+        {
+            "name": "Advanced Options",
+            "options": ["--replace", "--cookie-file", "--force-rematch"],
+        },
+        {
+            "name": "Info",
+            "options": ["--version", "--help"],
+        },
+    ],
+}
+
 from spot_downloader.core import (
     Config,
     ConfigError,
@@ -110,65 +142,68 @@ __version__ = "0.2.0"
     "--url",
     type=str,
     default=None,
-    help="Spotify playlist URL. Required for --1 (fetch metadata phase)."
+    metavar="<spotify-url>",
+    help="Spotify playlist URL"
 )
 @click.option(
     "--liked",
     is_flag=True,
-    help="Download user's Liked Songs instead of a playlist."
+    help="Download user's Liked Songs"
 )
 @click.option(
     "--sync",
     is_flag=True,
-    help="Sync mode: only download new tracks. Without --url or --liked, syncs ALL known playlists."
+    help="Sync mode: new tracks + playlist changes detection"
 )
 @click.option(
     "--no-liked",
     is_flag=True,
-    help="With --sync: skip Liked Songs (no Spotify login required)."
+    help="Skip Liked Songs in sync mode"
 )
 @click.option(
     "--1", "phase1_only",
     is_flag=True,
-    help="Run only PHASE 1: fetch Spotify metadata. Requires --url or --liked."
+    help="PHASE 1: Fetch Spotify metadata"
 )
 @click.option(
     "--2", "phase2_only",
     is_flag=True,
-    help="Run only PHASE 2: match tracks on YouTube Music."
+    help="PHASE 2: Match tracks on YouTube Music"
 )
 @click.option(
     "--3", "phase3_only",
     is_flag=True,
-    help="Run only PHASE 3: download audio files."
+    help="PHASE 3: Download audio files"
 )
 @click.option(
     "--4", "phase4_only",
     is_flag=True,
-    help="Run only PHASE 4: fetch lyrics for downloaded tracks."
+    help="PHASE 4: Fetch lyrics"
 )
 @click.option(
     "--5", "phase5_only",
     is_flag=True,
-    help="Run only PHASE 5: embed metadata and lyrics into M4A files."
+    help="PHASE 5: Embed metadata and lyrics"
 )
 @click.option(
     "--replace",
     nargs=2,
     type=(click.Path(exists=True, path_type=Path), str),
     default=None,
-    help="Replace audio in M4A file. Usage: --replace <file.m4a> <youtube_url>"
+    metavar="<file.m4a> <youtube-url>",
+    help="Replace audio in existing M4A file"
 )
 @click.option(
     "--cookie-file",
     type=click.Path(exists=True, path_type=Path),
     default=None,
-    help="Path to cookies.txt for YouTube Music Premium quality."
+    metavar="<cookies.txt>",
+    help="Cookies for YouTube Music Premium quality"
 )
 @click.option(
     "--force-rematch",
     is_flag=True,
-    help="Reset failed YouTube matches and retry matching in PHASE 2."
+    help="Retry failed YouTube matches"
 )
 @click.option(
     "--version",
@@ -199,13 +234,31 @@ def cli(
     and downloading the audio in M4A format with full metadata.
     
     \b
-    Examples:
-        spot --url "https://open.spotify.com/playlist/..."
-        spot --url "https://..." --sync
-        spot --sync                    # Sync all playlists + liked songs
-        spot --sync --no-liked         # Sync all playlists (no login)
-        spot --liked
+    BASIC USAGE:
+        spot --url "https://open.spotify.com/playlist/..."    # Download playlist
+        spot --liked                                          # Download Liked Songs
+    
+    \b
+    SYNC MODE:
+        spot --url "https://..." --sync        # Sync specific playlist
+        spot --sync                            # Sync ALL playlists + Liked Songs
+        spot --sync --no-liked                 # Sync ALL playlists (skip Liked Songs)
+        
+        Sync mode downloads new tracks and detects playlist changes
+        (removed tracks, position changes). Prompts before applying changes locally.
+    
+    \b
+    PHASE-BY-PHASE:
+        spot --1 --url "https://..."           # Fetch Spotify metadata only
+        spot --2                               # Match on YouTube Music only
+        spot --3                               # Download audio files only
+        spot --4                               # Fetch lyrics only
+        spot --5                               # Embed metadata only
+    
+    \b
+    ADVANCED:
         spot --replace song.m4a "https://youtube.com/watch?v=..."
+        spot --cookie-file cookies.txt --url "https://..."
     """
     # Handle --version
     if version:
