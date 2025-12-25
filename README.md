@@ -269,6 +269,10 @@ You can see a demo of spot-downloader in action in [this video](/Asset/Demo_phas
 ## License: 
 [MIT](LICENSE)
 
+<a href="https://ko-fi.com/verryx02">
+  <img src="Assets/support_me_on_kofi_beige.png" alt="Support me on Ko-fi" width="170">
+</a>
+
 ## Acknowledgments
 
 This project is inspired by [spotDL](https://github.com/spotDL/spotify-downloader). It uses and improves its matching algorithm for music searches on YouTube.
