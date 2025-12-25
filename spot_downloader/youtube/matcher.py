@@ -35,6 +35,7 @@ Usage:
     failed = [r for r in results if not r.matched]
 """
 
+import random
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -92,10 +93,19 @@ SEARCH_OPTIONS = [
 # =============================================================================
 
 # Maximum number of retry attempts for API calls
-MAX_SEARCH_RETRIES = 3
+MAX_SEARCH_RETRIES = 5
 
-# Base delay between retries (seconds) - uses exponential backoff
-RETRY_DELAY_SECONDS = 1.0
+# Base delay between retries (seconds) - uses exponential backoff with jitter
+RETRY_DELAY_BASE = 2.0
+
+# Maximum delay between retries (seconds) - caps exponential growth
+RETRY_DELAY_MAX = 30.0
+
+# Jitter factor (±30%) to prevent thundering herd when multiple threads retry
+RETRY_JITTER_FACTOR = 0.3
+
+# Extra delay multiplier when rate limit is detected (429 errors)
+RATE_LIMIT_DELAY_MULTIPLIER = 2.0
 
 
 # =============================================================================
@@ -547,6 +557,8 @@ class YouTubeMatcher:
         """
         Execute a search function with retry logic for transient errors.
         
+        Uses exponential backoff with jitter to handle rate limiting gracefully.
+        
         Args:
             search_func: The search function to call.
             *args: Positional arguments for the search function.
@@ -554,6 +566,11 @@ class YouTubeMatcher:
         
         Returns:
             List of search results, or empty list if all retries fail.
+        
+        Retry Strategy:
+            - Exponential backoff: 2s → 4s → 8s → 16s → 30s (capped)
+            - Jitter: ±30% randomization to prevent thundering herd
+            - Rate limit detection: 2x delay multiplier for 429 errors
         """
         last_exception = None
         
@@ -562,12 +579,44 @@ class YouTubeMatcher:
                 return search_func(*args, **kwargs) or []
             except Exception as e:
                 last_exception = e
+                
                 if attempt < MAX_SEARCH_RETRIES - 1:
-                    delay = RETRY_DELAY_SECONDS * (2 ** attempt)
-                    logger.debug(
-                        f"Search attempt {attempt + 1} failed: {e}. "
-                        f"Retrying in {delay}s..."
+                    # Calculate base delay with exponential backoff
+                    base_delay = RETRY_DELAY_BASE * (2 ** attempt)
+                    
+                    # Cap at maximum delay
+                    base_delay = min(base_delay, RETRY_DELAY_MAX)
+                    
+                    # Check if this is a rate limit error
+                    error_str = str(e).lower()
+                    is_rate_limit = (
+                        "429" in error_str or 
+                        "rate" in error_str or 
+                        "too many" in error_str or
+                        "quota" in error_str
                     )
+                    
+                    if is_rate_limit:
+                        base_delay *= RATE_LIMIT_DELAY_MULTIPLIER
+                        base_delay = min(base_delay, RETRY_DELAY_MAX)
+                    
+                    # Add jitter (±30%) to prevent thundering herd
+                    jitter = base_delay * RETRY_JITTER_FACTOR * (2 * random.random() - 1)
+                    delay = base_delay + jitter
+                    
+                    # Ensure delay is positive
+                    delay = max(0.5, delay)
+                    
+                    log_msg = (
+                        f"Search attempt {attempt + 1}/{MAX_SEARCH_RETRIES} failed: {e}. "
+                        f"Retrying in {delay:.1f}s"
+                    )
+                    if is_rate_limit:
+                        log_msg += " (rate limit detected)"
+                        logger.warning(log_msg)
+                    else:
+                        logger.debug(log_msg)
+                    
                     time.sleep(delay)
                 else:
                     logger.error(
