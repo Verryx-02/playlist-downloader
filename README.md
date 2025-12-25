@@ -270,7 +270,7 @@ You can see a demo of spot-downloader in action in [this video](/Asset/Demo_phas
 [MIT](LICENSE)
 
 <a href="https://ko-fi.com/verryx02">
-  <img src="Assets/support_me_on_kofi_beige.png" alt="Support me on Ko-fi" width="170">
+  <img src="Asset/support_me_on_kofi_beige.png" alt="Support me on Ko-fi" width="170">
 </a>
 
 ## Acknowledgments
