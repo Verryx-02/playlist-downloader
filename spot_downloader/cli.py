@@ -961,31 +961,32 @@ def _run_phase3(
     """
     Run PHASE 3: Download audio files.
     
+    Uses the central storage architecture:
+    - Audio files saved ONCE in tracks/ directory (canonical files)
+    - Hard links created in playlist directories with position-based names
+    
     Args:
         database: Database instance.
-        playlist_id: Playlist ID for database queries.
-        output_dir: Directory for output files.
+        playlist_id: Playlist ID (used for logging context).
+        output_dir: Base output directory (contains tracks/, playlists, etc.)
         cookie_file: Optional cookies.txt for YT Premium.
         num_threads: Number of parallel downloads.
     
     Behavior:
         1. Log phase start
-        2. Get tracks with youtube_url but not downloaded
+        2. Get tracks with youtube_url but not downloaded (global)
         3. For each track:
            a. Download audio from YouTube using yt-dlp
-           b. Convert to M4A format
-           c. Save with final filename: {assigned_number}-{title}-{artist}.m4a
-           d. Update database: downloaded=True, file_path, download_timestamp
+           b. Convert to M4A format via FFmpeg postprocessor
+           c. Save to tracks/ with canonical name: {title}-{artist}.m4a
+           d. Update database: downloaded=True, file_path (canonical path)
+           e. Create hard links in ALL playlist directories containing this track
         4. Log download statistics
         5. Write failures to download_failures.log
     
     File Naming:
-        Files are saved directly with their final name using the
-        assigned_number from PHASE 1 (based on chronological order
-        of when tracks were added to the playlist).
-        
-        Format: {assigned_number}-{title}-{artist}.m4a
-        Example: 42-Bohemian Rhapsody-Queen.m4a
+        - Canonical (in tracks/): {title}-{artist}.m4a
+        - Playlist links: {position:05d}-{title}-{artist}.m4a
     
     Important:
         This phase does NOT fetch lyrics or embed metadata.
@@ -993,10 +994,43 @@ def _run_phase3(
     
     Database Updates:
         - Sets downloaded=True
-        - Sets file_path to the final file location
+        - Sets file_path to the canonical path in tracks/
         - Sets download_timestamp
     """
-    raise NotImplementedError("Contract only - implementation pending")
+    logger.info("=" * 60)
+    logger.info("PHASE 3: Downloading audio files")
+    logger.info("=" * 60)
+    
+    # Get tracks needing download (global - not playlist-specific)
+    tracks = database.get_tracks_needing_download()
+    
+    if not tracks:
+        logger.info("No tracks need downloading")
+        logger.info("PHASE 3 complete")
+        return
+    
+    logger.info(f"Found {len(tracks)} tracks to download")
+    
+    if cookie_file:
+        logger.info(f"Using cookies for premium quality: {cookie_file}")
+    else:
+        logger.info("No cookies provided - downloads limited to 128 kbps")
+    
+    # Run download
+    stats = download_tracks_phase3(
+        database=database,
+        output_dir=output_dir,
+        playlist_id=playlist_id,
+        cookie_file=cookie_file,
+        num_threads=num_threads
+    )
+    
+    # Log results
+    logger.info(f"Download results: {stats.downloaded}/{stats.total} successful")
+    if stats.failed > 0:
+        logger.warning(f"Failed downloads: {stats.failed} (see download_failures.log)")
+    if stats.skipped > 0:
+        logger.info(f"Skipped (already downloaded): {stats.skipped}")
 
 def _run_phase4(
     database: Database,

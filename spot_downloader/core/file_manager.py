@@ -8,21 +8,21 @@ Architecture:
     output_directory/
     ├── database.db
     ├── tracks/                               # Central storage (canonical files)
-    │   ├── Queen-Bohemian Rhapsody.m4a
-    │   ├── The Beatles-Hey Jude.m4a
-    │   └── AC_DC-Back In Black.m4a
+    │   ├── Bohemian Rhapsody-Queen.m4a
+    │   ├── Hey Jude-The Beatles.m4a
+    │   └── Back In Black-AC_DC.m4a
     ├── logs/
     │   └── ...
     ├── My Playlist/                          # Playlist view (hard links)
-    │   ├── 00001-Bohemian Rhapsody-Queen.m4a → ../tracks/Queen-Bohemian Rhapsody.m4a
-    │   ├── 00002-Hey Jude-The Beatles.m4a    → ../tracks/The Beatles-Hey Jude.m4a
-    │   └── 00003-Back In Black-AC_DC.m4a     → ../tracks/AC_DC-Back In Black.m4a
+    │   ├── 00001-Bohemian Rhapsody-Queen.m4a → ../tracks/Bohemian Rhapsody-Queen.m4a
+    │   ├── 00002-Hey Jude-The Beatles.m4a    → ../tracks/Hey Jude-The Beatles.m4a
+    │   └── 00003-Back In Black-AC_DC.m4a     → ../tracks/Back In Black-AC_DC.m4a
     └── Another Playlist/
-        ├── 00001-Back In Black-AC_DC.m4a     → ../tracks/AC_DC-Back In Black.m4a
-        └── 00002-Bohemian Rhapsody-Queen.m4a → ../tracks/Queen-Bohemian Rhapsody.m4a
+        ├── 00001-Back In Black-AC_DC.m4a     → ../tracks/Back In Black-AC_DC.m4a
+        └── 00002-Bohemian Rhapsody-Queen.m4a → ../tracks/Bohemian Rhapsody-Queen.m4a
 
 File Naming:
-    - Canonical (in tracks/): {artist}-{title}.m4a
+    - Canonical (in tracks/): {title}-{artist}.m4a
     - Playlist links: {position:05d}-{title}-{artist}.m4a
     
     Position uses 5-digit padding (00001-99999) to support Spotify's
@@ -39,9 +39,10 @@ Usage:
     
     # Get canonical path for download
     canonical = fm.get_canonical_path("Queen", "Bohemian Rhapsody")
+    # Returns: tracks/Bohemian Rhapsody-Queen.m4a
     
     # After download, create links in all playlists
-    fm.create_playlist_link(canonical, "My Playlist", 1, "Queen", "Bohemian Rhapsody")
+    fm.create_playlist_link(canonical, "My Playlist", 1, "Bohemian Rhapsody", "Queen")
 """
 
 import os
@@ -123,7 +124,7 @@ class FileManager:
         """
         Generate canonical filename (no position number).
         
-        Format: {artist}-{title}.m4a
+        Format: {title}-{artist}.m4a
         
         Args:
             artist: Artist name.
@@ -134,11 +135,11 @@ class FileManager:
         
         Example:
             get_canonical_filename("Queen", "Bohemian Rhapsody")
-            # Returns: "Queen-Bohemian Rhapsody.m4a"
+            # Returns: "Bohemian Rhapsody-Queen.m4a"
         """
         safe_artist = sanitize_filename(artist)
         safe_title = sanitize_filename(title)
-        return f"{safe_artist}-{safe_title}.m4a"
+        return f"{safe_title}-{safe_artist}.m4a"
     
     def get_canonical_path(self, artist: str, title: str) -> Path:
         """
