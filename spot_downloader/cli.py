@@ -1012,7 +1012,7 @@ def _run_phase3(
     logger.info(f"Found {len(tracks)} tracks to download")
     
     if cookie_file:
-        logger.info(f"Using cookies for premium quality: {cookie_file}")
+        logger.info(f"Using cookie file: {cookie_file}")
     else:
         logger.info("No cookies provided - downloads limited to 128 kbps")
     

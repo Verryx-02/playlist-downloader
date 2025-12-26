@@ -51,10 +51,13 @@ Usage:
     print(f"Downloaded: {stats.downloaded}/{stats.total}")
 """
 
+import random
 import shutil
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from enum import Enum, auto
 from pathlib import Path
 from typing import Any, Optional
 
@@ -74,6 +77,122 @@ from spot_downloader.core.logger import get_logger, log_download_failure
 from spot_downloader.core.progress import SizedTextColumn
 
 logger = get_logger(__name__)
+
+
+# =============================================================================
+# Retry Configuration
+# =============================================================================
+
+MAX_RETRIES = 3  # 3 tentativi totali
+BASE_DELAY = 1.5  # seconds
+MAX_DELAY = 15.0  # seconds
+JITTER_FACTOR = 0.3  # randomness factor for backoff
+
+
+class YtDlpSilentLogger:
+    """
+    Custom logger for yt-dlp that suppresses output during retry attempts.
+    
+    yt-dlp ignores quiet=True for certain errors and prints directly to stderr.
+    This logger intercepts those messages and only shows them if we want to.
+    """
+    
+    def __init__(self, show_errors: bool = False):
+        """
+        Initialize the silent logger.
+        
+        Args:
+            show_errors: If True, errors are logged. If False, suppressed.
+        """
+        self.show_errors = show_errors
+        self.last_error: str | None = None
+    
+    def debug(self, msg: str) -> None:
+        """Suppress debug messages."""
+        pass
+    
+    def info(self, msg: str) -> None:
+        """Suppress info messages."""
+        pass
+    
+    def warning(self, msg: str) -> None:
+        """Suppress warning messages."""
+        pass
+    
+    def error(self, msg: str) -> None:
+        """Capture error but only show if configured to."""
+        self.last_error = msg
+        if self.show_errors:
+            logger.error(msg)
+
+
+class ErrorType(Enum):
+    """Classification of download errors for retry strategy."""
+    FORBIDDEN = auto()          # 403 / no data - retry with backoff
+    RATE_LIMITED = auto()       # 429 - retry with longer delay
+    FORMAT_UNAVAILABLE = auto() # Format not available - retry with fallback format
+    AGE_RESTRICTED = auto()     # Requires sign-in - needs cookies
+    NETWORK_ERROR = auto()      # Connection issues - retry with backoff
+    VIDEO_UNAVAILABLE = auto()  # Video removed/private - no retry
+    EMPTY_FILE = auto()         # Downloaded file is empty - retry with backoff
+    UNKNOWN = auto()            # Other errors - limited retry
+
+
+def classify_error(error_message: str) -> ErrorType:
+    """
+    Classify a yt-dlp error message to determine retry strategy.
+    
+    Args:
+        error_message: The error message from yt-dlp.
+    
+    Returns:
+        ErrorType indicating which retry strategy to use.
+    """
+    msg = error_message.lower()
+    
+    # 403 or "no data blocks" (masked 403)
+    if "403" in msg or "forbidden" in msg or "did not get any data" in msg:
+        return ErrorType.FORBIDDEN
+    
+    if "429" in msg or "too many requests" in msg or "rate limit" in msg:
+        return ErrorType.RATE_LIMITED
+    
+    if "format" in msg and ("not available" in msg or "unavailable" in msg):
+        return ErrorType.FORMAT_UNAVAILABLE
+    
+    if "sign in" in msg or "age" in msg or "confirm your age" in msg:
+        return ErrorType.AGE_RESTRICTED
+    
+    if any(x in msg for x in ["connection", "timeout", "network", "urlopen error"]):
+        return ErrorType.NETWORK_ERROR
+    
+    if any(x in msg for x in ["video unavailable", "private video", "removed", "deleted"]):
+        return ErrorType.VIDEO_UNAVAILABLE
+    
+    if "file is empty" in msg or "empty file" in msg:
+        return ErrorType.EMPTY_FILE
+    
+    return ErrorType.UNKNOWN
+
+
+def calculate_backoff(attempt: int, base_delay: float = BASE_DELAY) -> float:
+    """
+    Calculate exponential backoff delay with jitter.
+    
+    Args:
+        attempt: Current attempt number (0-indexed).
+        base_delay: Base delay in seconds.
+    
+    Returns:
+        Delay in seconds with jitter applied.
+    """
+    # Exponential backoff: 2^attempt * base_delay
+    delay = min(base_delay * (2 ** attempt), MAX_DELAY)
+    
+    # Add jitter: ±50% randomness
+    jitter = delay * JITTER_FACTOR * (2 * random.random() - 1)
+    
+    return max(0.5, delay + jitter)
 
 
 # Progress bar theme (same as matching phase)
@@ -285,7 +404,7 @@ class Downloader:
                 )
                 self._cookie_file = None
             else:
-                logger.debug(f"Using cookies for premium quality: {self._cookie_file}")
+                logger.debug(f"Using cookie fi: {self._cookie_file}")
     
     def download_tracks(
         self,
@@ -459,73 +578,224 @@ class Downloader:
     def _download_audio(
         self,
         youtube_url: str,
-        output_path: Path
+        output_path: Path,
+        use_fallback_format: bool = False
     ) -> Path | None:
         """
-        Download audio from YouTube using yt-dlp.
+        Download audio from YouTube using yt-dlp with intelligent retry.
         
         Args:
             youtube_url: YouTube video URL to download.
             output_path: Directory for temporary download file.
+            use_fallback_format: If True, use generic 'bestaudio/best' format.
         
         Returns:
             Path to the downloaded M4A file, or None if download failed.
         
         Raises:
-            DownloadError: If download fails.
+            DownloadError: If download fails after all retries.
         """
         # Generate unique output template
         output_template = str(output_path / "%(id)s.%(ext)s")
         
-        options = self._get_yt_dlp_options(output_template)
+        last_error: str | None = None
         
-        try:
-            with YoutubeDL(options) as ydl:
-                # Extract info and download
-                info = ydl.extract_info(youtube_url, download=True)
+        for attempt in range(MAX_RETRIES):
+            # Use silent logger for retry attempts, show errors only on last attempt
+            is_last_attempt = (attempt == MAX_RETRIES - 1)
+            yt_logger = YtDlpSilentLogger(show_errors=is_last_attempt)
+            
+            try:
+                options = self._get_yt_dlp_options(
+                    output_template, 
+                    use_fallback_format,
+                    yt_logger=yt_logger
+                )
                 
-                if info is None:
-                    raise DownloadError("yt-dlp returned no info")
+                with YoutubeDL(options) as ydl:
+                    # Extract info and download
+                    info = ydl.extract_info(youtube_url, download=True)
+                    
+                    if info is None:
+                        raise DownloadError("yt-dlp returned no info")
+                    
+                    # Find the downloaded file
+                    return self._find_downloaded_file(output_path, info.get("id", "unknown"))
+                    
+            except Exception as e:
+                error_msg = str(e)
+                # Also check if yt-dlp logged an error we didn't catch
+                if yt_logger.last_error and yt_logger.last_error not in error_msg:
+                    error_msg = f"{error_msg} | {yt_logger.last_error}"
                 
-                # Find the downloaded file
-                video_id = info.get("id", "unknown")
+                last_error = error_msg
+                error_type = classify_error(error_msg)
                 
-                # Look for the m4a file (postprocessor converts to m4a)
-                m4a_file = output_path / f"{video_id}.m4a"
-                if m4a_file.exists():
-                    return m4a_file
+                # Determine retry strategy based on error type
+                should_retry, delay, switch_format = self._get_retry_strategy(
+                    error_type, attempt, use_fallback_format
+                )
                 
-                # Fallback: look for any audio file
-                for ext in [".m4a", ".webm", ".opus", ".mp3", ".mp4"]:
-                    candidate = output_path / f"{video_id}{ext}"
-                    if candidate.exists():
-                        return candidate
+                if not should_retry:
+                    # No point retrying - raise immediately
+                    raise DownloadError(f"yt-dlp error: {error_msg}") from e
                 
-                # Last resort: find any file in the directory
-                for f in output_path.iterdir():
-                    if f.is_file() and f.suffix in [".m4a", ".webm", ".opus", ".mp3", ".mp4"]:
-                        return f
+                if switch_format and not use_fallback_format:
+                    # Retry immediately with fallback format
+                    logger.debug(f"Format unavailable, retrying with fallback format")
+                    return self._download_audio(youtube_url, output_path, use_fallback_format=True)
                 
-                raise DownloadError(f"Downloaded file not found in {output_path}")
-                
-        except Exception as e:
-            if isinstance(e, DownloadError):
-                raise
-            raise DownloadError(f"yt-dlp error: {e}") from e
+                if attempt < MAX_RETRIES - 1:
+                    logger.debug(f"Retry {attempt + 1}/{MAX_RETRIES} after {delay:.1f}s ({error_type.name})")
+                    time.sleep(delay)
+                    
+                    # Clean up any partial downloads before retry
+                    self._cleanup_partial_downloads(output_path)
+        
+        # All retries exhausted
+        raise DownloadError(f"yt-dlp error: {last_error}")
     
-    def _get_yt_dlp_options(self, output_template: str) -> dict[str, Any]:
+    def _get_retry_strategy(
+        self,
+        error_type: ErrorType,
+        attempt: int,
+        already_using_fallback: bool
+    ) -> tuple[bool, float, bool]:
+        """
+        Determine retry strategy based on error type.
+        
+        Args:
+            error_type: Classified error type.
+            attempt: Current attempt number (0-indexed).
+            already_using_fallback: Whether we're already using fallback format.
+        
+        Returns:
+            Tuple of (should_retry, delay_seconds, switch_to_fallback_format)
+        """
+        if error_type == ErrorType.FORBIDDEN:
+            # 403 / no data: Retry with reasonable delay (1.5-2.5s)
+            delay = 1.5 + random.random()  # 1.5-2.5s
+            return (True, delay, False)
+        
+        elif error_type == ErrorType.RATE_LIMITED:
+            # 429: Retry with longer backoff (3s, 6s, 12s)
+            return (True, calculate_backoff(attempt, base_delay=3.0), False)
+        
+        elif error_type == ErrorType.FORMAT_UNAVAILABLE:
+            # Format issue: Switch to fallback format immediately
+            if not already_using_fallback:
+                return (True, 0, True)  # Switch format, no delay
+            else:
+                return (False, 0, False)  # Already tried fallback, give up
+        
+        elif error_type == ErrorType.AGE_RESTRICTED:
+            # Age restriction: Only retry if we have cookies (might be expired)
+            if self._cookie_file is not None and attempt == 0:
+                logger.warning("Age-restricted video - cookies may be expired")
+                return (True, 1.0, False)
+            else:
+                logger.warning(
+                    "Age-restricted video requires cookies. "
+                    "Add cookie_file to config.yaml"
+                )
+                return (False, 0, False)
+        
+        elif error_type == ErrorType.NETWORK_ERROR:
+            # Network issues: Retry with moderate backoff (1.5s, 3s, 6s)
+            return (True, calculate_backoff(attempt, base_delay=1.5), False)
+        
+        elif error_type == ErrorType.EMPTY_FILE:
+            # Empty file: Retry with short delay (1.5-2.5s)
+            delay = 1.5 + random.random()
+            return (True, delay, False)
+        
+        elif error_type == ErrorType.VIDEO_UNAVAILABLE:
+            # Video gone: No point retrying
+            return (False, 0, False)
+        
+        else:  # UNKNOWN
+            # Unknown errors: One retry with short delay
+            if attempt == 0:
+                return (True, 1.5, False)
+            return (False, 0, False)
+    
+    def _find_downloaded_file(self, output_path: Path, video_id: str) -> Path:
+        """
+        Find the downloaded audio file in the output directory.
+        
+        Args:
+            output_path: Directory where file was downloaded.
+            video_id: YouTube video ID.
+        
+        Returns:
+            Path to the downloaded file.
+        
+        Raises:
+            DownloadError: If no audio file is found.
+        """
+        # Look for the m4a file (postprocessor converts to m4a)
+        m4a_file = output_path / f"{video_id}.m4a"
+        if m4a_file.exists():
+            return m4a_file
+        
+        # Fallback: look for any audio file with video_id
+        for ext in [".m4a", ".webm", ".opus", ".mp3", ".mp4"]:
+            candidate = output_path / f"{video_id}{ext}"
+            if candidate.exists():
+                return candidate
+        
+        # Last resort: find any audio file in the directory
+        for f in output_path.iterdir():
+            if f.is_file() and f.suffix in [".m4a", ".webm", ".opus", ".mp3", ".mp4"]:
+                return f
+        
+        raise DownloadError(f"Downloaded file not found in {output_path}")
+    
+    def _cleanup_partial_downloads(self, output_path: Path) -> None:
+        """
+        Remove any partial/incomplete download files before retry.
+        
+        Args:
+            output_path: Directory containing download files.
+        """
+        try:
+            for f in output_path.iterdir():
+                if f.is_file():
+                    # Remove .part files and any audio files (incomplete downloads)
+                    if f.suffix in [".part", ".m4a", ".webm", ".opus", ".mp3", ".mp4", ".ytdl"]:
+                        f.unlink()
+        except Exception:
+            pass  # Best effort cleanup
+    
+    def _get_yt_dlp_options(
+        self,
+        output_template: str,
+        use_fallback_format: bool = False,
+        yt_logger: YtDlpSilentLogger | None = None
+    ) -> dict[str, Any]:
         """
         Build yt-dlp options dictionary.
         
         Args:
             output_template: Output path template for yt-dlp.
+            use_fallback_format: If True, use generic 'bestaudio/best' format
+                                instead of preferring m4a.
+            yt_logger: Custom logger to suppress yt-dlp output during retries.
         
         Returns:
             Dictionary of yt-dlp options.
         """
+        # Format selection
+        if use_fallback_format:
+            # Generic fallback: any best audio format
+            format_string = "bestaudio/best"
+        else:
+            # Preferred: m4a if available, else any best audio
+            format_string = "bestaudio[ext=m4a]/bestaudio/best"
+        
         options: dict[str, Any] = {
-            # Format selection: prefer m4a, fallback to best audio
-            "format": "bestaudio[ext=m4a]/bestaudio/best",
+            # Format selection
+            "format": format_string,
             
             # Output
             "outtmpl": output_template,
@@ -538,7 +808,7 @@ class Downloader:
             # Encoding
             "encoding": "UTF-8",
             
-            # Retries
+            # Retries (yt-dlp internal retries for fragments)
             "retries": 3,
             "fragment_retries": 3,
             
@@ -554,6 +824,10 @@ class Downloader:
             # Don't keep intermediate files
             "keepvideo": False,
         }
+        
+        # Add custom logger to suppress yt-dlp stderr output
+        if yt_logger is not None:
+            options["logger"] = yt_logger
         
         # Add cookies if available
         if self._cookie_file is not None:

@@ -66,3 +66,6 @@ api_keys.txt
 *.flac
 *.m4a
 *.wav
+
+# Other
+Asset/music.youtube.com_cookies.txt
