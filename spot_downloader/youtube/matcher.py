@@ -108,7 +108,7 @@ SEARCH_OPTIONS = [
 # =============================================================================
 
 # Maximum number of retry attempts for API calls
-MAX_SEARCH_RETRIES = 8
+MAX_SEARCH_RETRIES = 10
 
 # Base delay between retries (seconds) - uses exponential backoff with jitter
 RETRY_DELAY_BASE = 2.0

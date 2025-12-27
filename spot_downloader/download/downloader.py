@@ -150,12 +150,14 @@ def classify_error(error_message: str) -> ErrorType:
     """
     msg = error_message.lower()
     
+    # IMPORTANT: Check rate limiting FIRST because YouTube's rate limit message
+    # also contains "video unavailable" which would match VIDEO_UNAVAILABLE
+    if any(x in msg for x in ["rate-limited", "rate limit", "429", "too many requests", "try again later"]):
+        return ErrorType.RATE_LIMITED
+    
     # 403 or "no data blocks" (masked 403)
     if "403" in msg or "forbidden" in msg or "did not get any data" in msg:
         return ErrorType.FORBIDDEN
-    
-    if "429" in msg or "too many requests" in msg or "rate limit" in msg:
-        return ErrorType.RATE_LIMITED
     
     if "format" in msg and ("not available" in msg or "unavailable" in msg):
         return ErrorType.FORMAT_UNAVAILABLE
@@ -663,8 +665,18 @@ class Downloader:
             return (True, delay)
         
         elif error_type == ErrorType.RATE_LIMITED:
-            # 429: Retry with longer backoff (3s, 6s, 12s)
-            return (True, calculate_backoff(attempt, base_delay=3.0))
+            # YouTube rate limiting can last up to an hour
+            # Don't waste time with short retries - just fail and let user retry later
+            if attempt == 0:
+                logger.warning(
+                    "YouTube rate limiting detected. Consider reducing threads "
+                    "or waiting before re-running. Track will be retried on next run."
+                )
+                # One retry after 30 seconds in case it's temporary
+                return (True, 30.0)
+            else:
+                # Don't keep retrying - it won't help
+                return (False, 0)
         
         elif error_type == ErrorType.FORMAT_UNAVAILABLE:
             # Format issue: Retry with delay (yt-dlp will try different clients)
@@ -788,6 +800,10 @@ class Downloader:
             # Retries (yt-dlp internal retries for fragments)
             "retries": 3,
             "fragment_retries": 3,
+            
+            # Sleep between requests to avoid rate limiting
+            # This is especially important with multiple threads
+            "sleep_interval_requests": 1,  # 1 second between requests
             
             # Try multiple YouTube player clients (fixes "format not available")
             # This is the key fix from spotDL issues
