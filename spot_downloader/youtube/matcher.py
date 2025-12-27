@@ -65,6 +65,21 @@ logger = get_logger(__name__)
 
 
 # =============================================================================
+# CUSTOM EXCEPTIONS
+# =============================================================================
+
+class TransientSearchError(Exception):
+    """
+    Raised when search fails due to transient API/network errors.
+    
+    These errors are temporary (rate limiting, connection issues, malformed responses)
+    and the track should NOT be marked as "match failed" - it should remain pending
+    for retry on the next run.
+    """
+    pass
+
+
+# =============================================================================
 # DURATION AND SIMILARITY THRESHOLDS
 # =============================================================================
 
@@ -93,7 +108,7 @@ SEARCH_OPTIONS = [
 # =============================================================================
 
 # Maximum number of retry attempts for API calls
-MAX_SEARCH_RETRIES = 5
+MAX_SEARCH_RETRIES = 8
 
 # Base delay between retries (seconds) - uses exponential backoff with jitter
 RETRY_DELAY_BASE = 2.0
@@ -527,6 +542,20 @@ class YouTubeMatcher:
                             )
                             progress_bar.update(matched=False)
                         
+                    except TransientSearchError as e:
+                        # Transient error - do NOT mark as failed
+                        # Track remains pending and will be retried next run
+                        logger.warning(
+                            f"Transient error matching {track.artist} - {track.name}: {e}. "
+                            f"Track will be retried on next run."
+                        )
+                        results_map[track.spotify_id] = MatchResult.failure(
+                            spotify_id=track.spotify_id,
+                            reason=f"Transient error (will retry): {str(e)}"
+                        )
+                        # Do NOT call mark_youtube_match_failed!
+                        progress_bar.update(matched=False)
+                        
                     except Exception as e:
                         logger.error(
                             f"Error matching {track.artist} - {track.name}: {e}"
@@ -565,7 +594,11 @@ class YouTubeMatcher:
             **kwargs: Keyword arguments for the search function.
         
         Returns:
-            List of search results, or empty list if all retries fail.
+            List of search results.
+        
+        Raises:
+            TransientSearchError: If all retries fail due to transient errors.
+                                 The track should remain pending, not marked as failed.
         
         Retry Strategy:
             - Exponential backoff: 2s → 4s → 8s → 16s → 30s (capped)
@@ -619,11 +652,75 @@ class YouTubeMatcher:
                     
                     time.sleep(delay)
                 else:
-                    logger.error(
-                        f"Search failed after {MAX_SEARCH_RETRIES} attempts: {e}"
-                    )
+                    # All retries exhausted - check if error is transient
+                    error_str = str(last_exception).lower()
+                    is_transient = self._is_transient_error(error_str)
+                    
+                    if is_transient:
+                        logger.warning(
+                            f"Search failed after {MAX_SEARCH_RETRIES} attempts (transient): {last_exception}"
+                        )
+                        raise TransientSearchError(str(last_exception)) from last_exception
+                    else:
+                        logger.error(
+                            f"Search failed after {MAX_SEARCH_RETRIES} attempts: {last_exception}"
+                        )
         
         return []
+    
+    def _is_transient_error(self, error_str: str) -> bool:
+        """
+        Check if an error message indicates a transient (temporary) error.
+        
+        Transient errors are those caused by temporary API/network issues,
+        not by the track actually being unavailable. Tracks with transient
+        errors should remain pending for retry.
+        
+        Args:
+            error_str: Lowercase error message string.
+        
+        Returns:
+            True if error is transient, False otherwise.
+        """
+        transient_patterns = (
+            # JSON/parsing errors (empty or malformed response)
+            "expecting value",
+            "json",
+            "decode",
+            
+            # Rate limiting
+            "429",
+            "rate",
+            "too many",
+            "quota",
+            "throttl",
+            
+            # Connection errors
+            "connection",
+            "timeout",
+            "timed out",
+            "reset",
+            "refused",
+            "ssl",
+            "certificate",
+            
+            # Server errors
+            "500",
+            "502",
+            "503",
+            "504",
+            "temporarily",
+            "unavailable",
+            "server error",
+            "internal error",
+            
+            # Network errors
+            "network",
+            "unreachable",
+            "dns",
+        )
+        
+        return any(pattern in error_str for pattern in transient_patterns)
     
     def _search_by_isrc(self, isrc: str) -> list[YouTubeResult]:
         """

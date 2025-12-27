@@ -404,7 +404,7 @@ class Downloader:
                 )
                 self._cookie_file = None
             else:
-                logger.debug(f"Using cookie fi: {self._cookie_file}")
+                logger.debug(f"Using cookies for premium quality: {self._cookie_file}")
     
     def download_tracks(
         self,
@@ -578,8 +578,7 @@ class Downloader:
     def _download_audio(
         self,
         youtube_url: str,
-        output_path: Path,
-        use_fallback_format: bool = False
+        output_path: Path
     ) -> Path | None:
         """
         Download audio from YouTube using yt-dlp with intelligent retry.
@@ -587,7 +586,6 @@ class Downloader:
         Args:
             youtube_url: YouTube video URL to download.
             output_path: Directory for temporary download file.
-            use_fallback_format: If True, use generic 'bestaudio/best' format.
         
         Returns:
             Path to the downloaded M4A file, or None if download failed.
@@ -606,11 +604,7 @@ class Downloader:
             yt_logger = YtDlpSilentLogger(show_errors=is_last_attempt)
             
             try:
-                options = self._get_yt_dlp_options(
-                    output_template, 
-                    use_fallback_format,
-                    yt_logger=yt_logger
-                )
+                options = self._get_yt_dlp_options(output_template, yt_logger=yt_logger)
                 
                 with YoutubeDL(options) as ydl:
                     # Extract info and download
@@ -632,18 +626,11 @@ class Downloader:
                 error_type = classify_error(error_msg)
                 
                 # Determine retry strategy based on error type
-                should_retry, delay, switch_format = self._get_retry_strategy(
-                    error_type, attempt, use_fallback_format
-                )
+                should_retry, delay = self._get_retry_strategy(error_type, attempt)
                 
                 if not should_retry:
                     # No point retrying - raise immediately
                     raise DownloadError(f"yt-dlp error: {error_msg}") from e
-                
-                if switch_format and not use_fallback_format:
-                    # Retry immediately with fallback format
-                    logger.debug(f"Format unavailable, retrying with fallback format")
-                    return self._download_audio(youtube_url, output_path, use_fallback_format=True)
                 
                 if attempt < MAX_RETRIES - 1:
                     logger.debug(f"Retry {attempt + 1}/{MAX_RETRIES} after {delay:.1f}s ({error_type.name})")
@@ -658,66 +645,62 @@ class Downloader:
     def _get_retry_strategy(
         self,
         error_type: ErrorType,
-        attempt: int,
-        already_using_fallback: bool
-    ) -> tuple[bool, float, bool]:
+        attempt: int
+    ) -> tuple[bool, float]:
         """
         Determine retry strategy based on error type.
         
         Args:
             error_type: Classified error type.
             attempt: Current attempt number (0-indexed).
-            already_using_fallback: Whether we're already using fallback format.
         
         Returns:
-            Tuple of (should_retry, delay_seconds, switch_to_fallback_format)
+            Tuple of (should_retry, delay_seconds)
         """
         if error_type == ErrorType.FORBIDDEN:
             # 403 / no data: Retry with reasonable delay (1.5-2.5s)
             delay = 1.5 + random.random()  # 1.5-2.5s
-            return (True, delay, False)
+            return (True, delay)
         
         elif error_type == ErrorType.RATE_LIMITED:
             # 429: Retry with longer backoff (3s, 6s, 12s)
-            return (True, calculate_backoff(attempt, base_delay=3.0), False)
+            return (True, calculate_backoff(attempt, base_delay=3.0))
         
         elif error_type == ErrorType.FORMAT_UNAVAILABLE:
-            # Format issue: Switch to fallback format immediately
-            if not already_using_fallback:
-                return (True, 0, True)  # Switch format, no delay
-            else:
-                return (False, 0, False)  # Already tried fallback, give up
+            # Format issue: Retry with delay (yt-dlp will try different clients)
+            delay = 1.0 + random.random()
+            return (True, delay)
         
         elif error_type == ErrorType.AGE_RESTRICTED:
             # Age restriction: Only retry if we have cookies (might be expired)
             if self._cookie_file is not None and attempt == 0:
                 logger.warning("Age-restricted video - cookies may be expired")
-                return (True, 1.0, False)
+                return (True, 1.0)
             else:
                 logger.warning(
                     "Age-restricted video requires cookies. "
                     "Add cookie_file to config.yaml"
                 )
-                return (False, 0, False)
+                return (False, 0)
         
         elif error_type == ErrorType.NETWORK_ERROR:
             # Network issues: Retry with moderate backoff (1.5s, 3s, 6s)
-            return (True, calculate_backoff(attempt, base_delay=1.5), False)
+            return (True, calculate_backoff(attempt, base_delay=1.5))
         
         elif error_type == ErrorType.EMPTY_FILE:
             # Empty file: Retry with short delay (1.5-2.5s)
             delay = 1.5 + random.random()
-            return (True, delay, False)
+            return (True, delay)
         
         elif error_type == ErrorType.VIDEO_UNAVAILABLE:
             # Video gone: No point retrying
-            return (False, 0, False)
+            return (False, 0)
         
         else:  # UNKNOWN
             # Unknown errors: One retry with short delay
             if attempt == 0:
-                return (True, 1.5, False)
-            return (False, 0, False)
+                return (True, 1.5)
+            return (False, 0)
     
     def _find_downloaded_file(self, output_path: Path, video_id: str) -> Path:
         """
@@ -770,32 +753,26 @@ class Downloader:
     def _get_yt_dlp_options(
         self,
         output_template: str,
-        use_fallback_format: bool = False,
         yt_logger: YtDlpSilentLogger | None = None
     ) -> dict[str, Any]:
         """
         Build yt-dlp options dictionary.
         
+        Uses spotDL-style approach:
+        - Simple format: "bestaudio" (let yt-dlp choose best available)
+        - extractor_args to try multiple YouTube player clients
+        - FFmpeg postprocessor converts to m4a
+        
         Args:
             output_template: Output path template for yt-dlp.
-            use_fallback_format: If True, use generic 'bestaudio/best' format
-                                instead of preferring m4a.
             yt_logger: Custom logger to suppress yt-dlp output during retries.
         
         Returns:
             Dictionary of yt-dlp options.
         """
-        # Format selection
-        if use_fallback_format:
-            # Generic fallback: any best audio format
-            format_string = "bestaudio/best"
-        else:
-            # Preferred: m4a if available, else any best audio
-            format_string = "bestaudio[ext=m4a]/bestaudio/best"
-        
         options: dict[str, Any] = {
-            # Format selection
-            "format": format_string,
+            # Simple format: best audio available, yt-dlp picks the best
+            "format": "bestaudio",
             
             # Output
             "outtmpl": output_template,
@@ -811,6 +788,14 @@ class Downloader:
             # Retries (yt-dlp internal retries for fragments)
             "retries": 3,
             "fragment_retries": 3,
+            
+            # Try multiple YouTube player clients (fixes "format not available")
+            # This is the key fix from spotDL issues
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["web", "android", "default"],
+                }
+            },
             
             # Postprocessors: convert to m4a
             "postprocessors": [
@@ -875,25 +860,95 @@ def download_tracks_phase3(
         1. Get tracks needing download from database (global)
         2. Create Downloader instance
         3. Download all tracks to tracks/ directory
-        4. Create hard links in playlist directories
+        4. Rebuild ALL playlist links (ensures consistency)
         5. Return statistics
     """
+    file_manager = FileManager(output_dir)
+    
     tracks = database.get_tracks_needing_download()
     
     if not tracks:
         logger.info("No tracks to download")
+    else:
+        logger.info(f"Found {len(tracks)} tracks to download")
+        
+        downloader = Downloader(
+            database=database,
+            output_dir=output_dir,
+            cookie_file=cookie_file,
+            num_threads=num_threads
+        )
+        
+        stats = downloader.download_tracks(tracks, playlist_id, num_threads)
+    
+    # Always rebuild all playlist links at the end
+    # This ensures consistency even for tracks that were already downloaded
+    # but added to new playlists
+    logger.info("Rebuilding playlist links...")
+    _rebuild_all_playlist_links(database, file_manager)
+    
+    if not tracks:
         return DownloadStats(total=0)
+    return stats
+
+
+def _rebuild_all_playlist_links(database: Database, file_manager: FileManager) -> None:
+    """
+    Rebuild hard links for ALL playlists from database.
     
-    logger.info(f"Found {len(tracks)} tracks to download")
+    This ensures that every downloaded track has links in all playlists
+    that contain it, regardless of when it was downloaded or added.
     
-    downloader = Downloader(
-        database=database,
-        output_dir=output_dir,
-        cookie_file=cookie_file,
-        num_threads=num_threads
-    )
+    Args:
+        database: Database instance.
+        file_manager: FileManager instance.
+    """
+    # Get all playlists
+    playlists = database.get_all_playlists()
     
-    return downloader.download_tracks(tracks, playlist_id, num_threads)
+    for playlist in playlists:
+        playlist_id = playlist["spotify_id"]
+        playlist_name = playlist.get("name", "Unknown")
+        
+        # Get all tracks for this playlist that are downloaded
+        tracks = database.get_playlist_tracks_for_export(playlist_id)
+        
+        if not tracks:
+            continue
+        
+        # Rebuild playlist directory
+        playlist_dir = file_manager.get_playlist_dir(playlist_name)
+        
+        # Remove all existing links in playlist dir
+        for file in playlist_dir.iterdir():
+            if file.is_file() or file.is_symlink():
+                if file.suffix.lower() == ".m4a":
+                    file.unlink()
+        
+        # Create fresh links for all tracks
+        created = 0
+        for track in tracks:
+            file_path = track.get("file_path")
+            if not file_path:
+                continue
+            
+            canonical_path = Path(file_path)
+            if not canonical_path.exists():
+                continue
+            
+            try:
+                file_manager.create_playlist_link(
+                    canonical_path=canonical_path,
+                    playlist_name=playlist_name,
+                    position=track["position"],
+                    title=track["name"],
+                    artist=track["artist"]
+                )
+                created += 1
+            except Exception as e:
+                logger.debug(f"Failed to create link for {track['name']}: {e}")
+        
+        logger.debug(f"Rebuilt {created} links for '{playlist_name}'")
 
 
 def get_tracks_needing_download(database: Database, playlist_id: str | None = None) -> list[dict[str, Any]]:
