@@ -6,20 +6,21 @@ directory and hard links in playlist directories.
 
 Architecture:
     output_directory/
-    ├── database.db
+    ├── spot_downloader.db
     ├── tracks/                               # Central storage (canonical files)
     │   ├── Bohemian Rhapsody-Queen.m4a
     │   ├── Hey Jude-The Beatles.m4a
     │   └── Back In Black-AC_DC.m4a
     ├── logs/
     │   └── ...
-    ├── My Playlist/                          # Playlist view (hard links)
-    │   ├── 00001-Bohemian Rhapsody-Queen.m4a → ../tracks/Bohemian Rhapsody-Queen.m4a
-    │   ├── 00002-Hey Jude-The Beatles.m4a    → ../tracks/Hey Jude-The Beatles.m4a
-    │   └── 00003-Back In Black-AC_DC.m4a     → ../tracks/Back In Black-AC_DC.m4a
-    └── Another Playlist/
-        ├── 00001-Back In Black-AC_DC.m4a     → ../tracks/Back In Black-AC_DC.m4a
-        └── 00002-Bohemian Rhapsody-Queen.m4a → ../tracks/Bohemian Rhapsody-Queen.m4a
+    └── Playlists/                            # Playlist views container
+        ├── My Playlist/                      # Playlist view (hard links)
+        │   ├── 00001-Bohemian Rhapsody-Queen.m4a → ../../tracks/Bohemian Rhapsody-Queen.m4a
+        │   ├── 00002-Hey Jude-The Beatles.m4a    → ../../tracks/Hey Jude-The Beatles.m4a
+        │   └── 00003-Back In Black-AC_DC.m4a     → ../../tracks/Back In Black-AC_DC.m4a
+        └── Another Playlist/
+            ├── 00001-Back In Black-AC_DC.m4a     → ../../tracks/Back In Black-AC_DC.m4a
+            └── 00002-Bohemian Rhapsody-Queen.m4a → ../../tracks/Bohemian Rhapsody-Queen.m4a
 
 File Naming:
     - Canonical (in tracks/): {title}-{artist}.m4a
@@ -114,11 +115,13 @@ class FileManager:
             output_dir: Base output directory for all files.
         
         Behavior:
-            Creates tracks/ directory if it doesn't exist.
+            Creates tracks/ and Playlists/ directories if they don't exist.
         """
         self.output_dir = output_dir
         self.tracks_dir = output_dir / "tracks"
+        self.playlists_dir = output_dir / "Playlists"
         self.tracks_dir.mkdir(parents=True, exist_ok=True)
+        self.playlists_dir.mkdir(parents=True, exist_ok=True)
     
     def get_canonical_filename(self, artist: str, title: str) -> str:
         """
@@ -190,7 +193,7 @@ class FileManager:
             Path to playlist directory (created if needed).
         """
         safe_name = sanitize_filename(playlist_name)
-        playlist_dir = self.output_dir / safe_name
+        playlist_dir = self.playlists_dir / safe_name
         playlist_dir.mkdir(parents=True, exist_ok=True)
         return playlist_dir
     
@@ -395,7 +398,7 @@ class FileManager:
         import shutil
         
         safe_name = sanitize_filename(playlist_name)
-        playlist_dir = self.output_dir / safe_name
+        playlist_dir = self.playlists_dir / safe_name
         
         if not playlist_dir.exists():
             return False

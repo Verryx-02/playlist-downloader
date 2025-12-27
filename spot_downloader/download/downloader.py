@@ -61,20 +61,13 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any, Optional
 
-from rich import get_console
-from rich.progress import (
-    BarColumn,
-    Progress,
-    TaskID,
-)
-from rich.theme import Theme
 from yt_dlp import YoutubeDL
 
 from spot_downloader.core.database import Database
 from spot_downloader.core.exceptions import DownloadError
 from spot_downloader.core.file_manager import FileManager
 from spot_downloader.core.logger import get_logger, log_download_failure
-from spot_downloader.core.progress import SizedTextColumn
+from spot_downloader.core.progress import DownloadProgressBar
 
 logger = get_logger(__name__)
 
@@ -197,16 +190,6 @@ def calculate_backoff(attempt: int, base_delay: float = BASE_DELAY) -> float:
     return max(0.5, delay + jitter)
 
 
-# Progress bar theme (same as matching phase)
-DOWNLOAD_PROGRESS_THEME = Theme({
-    "bar.back": "grey23",
-    "bar.complete": "rgb(165,66,129)",
-    "bar.finished": "rgb(114,156,31)",
-    "bar.pulse": "rgb(165,66,129)",
-    "progress.percentage": "white",
-})
-
-
 @dataclass
 class DownloadStats:
     """
@@ -230,125 +213,6 @@ class DownloadStats:
         if self.total == 0:
             return 0.0
         return (self.downloaded / self.total) * 100
-
-
-class DownloadProgressBar:
-    """
-    Progress bar for download phase using Rich library.
-    
-    Displays:
-    - Description (e.g., "Downloading")
-    - Status message (downloaded/failed counts)
-    - Progress bar with spotDL-style colors
-    - Percentage
-    """
-    
-    def __init__(self, total: int, description: str = "Downloading"):
-        """
-        Initialize the progress bar.
-        
-        Args:
-            total: Total number of items to process.
-            description: Description to show on the left.
-        """
-        self.total = total
-        self.description = description
-        self.downloaded = 0
-        self.failed = 0
-        self.skipped = 0
-        self.completed = 0
-        
-        self.console = get_console()
-        self.console.push_theme(DOWNLOAD_PROGRESS_THEME)
-        
-        self.progress = Progress(
-            SizedTextColumn(
-                "[white]{task.description}",
-                overflow="ellipsis",
-                width=15,
-            ),
-            SizedTextColumn(
-                "{task.fields[status]}",
-                width=35,
-                style="white",
-            ),
-            BarColumn(bar_width=40, finished_style="green"),
-            "[progress.percentage]{task.percentage:>3.0f}%",
-            console=self.console,
-            transient=False,
-            refresh_per_second=10,
-        )
-        
-        self.task_id: Optional[TaskID] = None
-        self._started = False
-    
-    def __enter__(self) -> "DownloadProgressBar":
-        """Start the progress bar."""
-        self.start()
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Stop the progress bar."""
-        self.stop()
-    
-    def start(self) -> None:
-        """Start the progress bar (can be called manually)."""
-        if not self._started:
-            self.progress.start()
-            self.task_id = self.progress.add_task(
-                description=self.description,
-                total=self.total,
-                status=self._get_status_text(),
-            )
-            self._started = True
-    
-    def stop(self) -> None:
-        """Stop the progress bar."""
-        if self._started:
-            self.progress.stop()
-            self._started = False
-    
-    def _get_status_text(self) -> str:
-        """Get the status text showing downloaded/failed/skipped counts."""
-        parts = [
-            f"[green]✓ {self.downloaded}[/green]",
-            f"[red]✗ {self.failed}[/red]",
-        ]
-        if self.skipped > 0:
-            parts.append(f"[yellow]⊘ {self.skipped}[/yellow]")
-        return "  ".join(parts)
-    
-    def update(self, success: bool, skipped: bool = False) -> None:
-        """
-        Update the progress bar with a completed item.
-        
-        Args:
-            success: Whether the item was successfully downloaded.
-            skipped: Whether the item was skipped (already exists).
-        """
-        self.completed += 1
-        if skipped:
-            self.skipped += 1
-        elif success:
-            self.downloaded += 1
-        else:
-            self.failed += 1
-        
-        if self.task_id is not None:
-            self.progress.update(
-                self.task_id,
-                completed=self.completed,
-                status=self._get_status_text(),
-            )
-    
-    def log(self, message: str) -> None:
-        """
-        Print a log message above the progress bar.
-        
-        Args:
-            message: The message to print.
-        """
-        self.progress.console.print(message, highlight=False)
 
 
 class Downloader:
