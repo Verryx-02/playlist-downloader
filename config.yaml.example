@@ -11,9 +11,15 @@ output:
   # Supports ~ for home directory
   directory: "~/Desktop/Music/SpotDownloader"
 
+  # Directory where exported playlists will be saved
+  export_directory: "~/Desktop/Music/SpotDownloader/Exported"
+
 download:
-  # Number of parallel download threads (1-8 recommended)
-  threads: 4
+  # Thread configuration for each phase
+  threads:
+    matching: 8   # Phase 2: YouTube matching (can be higher, API is lenient)
+    download: 4   # Phase 3: Audio download (lower to avoid rate limiting)
+  
   
   # Optional: Path to cookies.txt for YouTube Music Premium quality (256 kbps)
   # Export cookies from music.youtube.com using browser extension "Get cookies.txt"

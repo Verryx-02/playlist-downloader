@@ -475,7 +475,7 @@ def _run_download(options: dict) -> None:
                 database=database,
                 playlist_id=playlist_id,
                 tracks=tracks,
-                num_threads=config.download.threads,
+                num_threads=config.download.matching_threads,
                 force_rematch=options["force_rematch"]
             )
         
@@ -494,7 +494,7 @@ def _run_download(options: dict) -> None:
                     playlist_id=playlist_id,
                     output_dir=config.output.directory,
                     cookie_file=cookie_file,
-                    num_threads=config.download.threads
+                    num_threads=config.download.download_threads
                 )
             except NotImplementedError:
                 logger.warning("PHASE 3 not yet implemented - skipping")
@@ -504,7 +504,7 @@ def _run_download(options: dict) -> None:
                 _run_phase4(
                     database=database,
                     playlist_id=playlist_id,
-                    num_threads=config.download.threads
+                    num_threads=config.download.download_threads
                 )
             except NotImplementedError:
                 logger.warning("PHASE 4 not yet implemented - skipping")
@@ -515,7 +515,7 @@ def _run_download(options: dict) -> None:
                     database=database,
                     playlist_id=playlist_id,
                     output_dir=config.output.directory,
-                    num_threads=config.download.threads
+                    num_threads=config.download.download_threads
                 )
             except NotImplementedError:
                 logger.warning("PHASE 5 not yet implemented - skipping")

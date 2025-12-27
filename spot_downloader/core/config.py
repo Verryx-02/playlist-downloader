@@ -8,7 +8,7 @@ The configuration file contains:
     - Spotify API credentials (client_id, client_secret)
     - Output directory for downloaded files
     - Export directory for portable playlist exports
-    - Number of parallel download threads
+    - Thread counts for matching and downloading phases
     - Optional cookie file path for YouTube Premium quality
 
 Configuration File Location:
@@ -25,7 +25,9 @@ Example config.yaml:
       export_directory: "~/Desktop/Music/SpotDownloader/export"
     
     download:
-      threads: 4
+      threads:
+        matching: 8   # Phase 2: YouTube matching (higher is faster)
+        download: 4   # Phase 3: Audio download (lower avoids rate limiting)
       cookie_file: null  # Optional: path to cookies.txt for YT Premium
 """
 
@@ -83,16 +85,20 @@ class DownloadConfig:
     Download behavior configuration.
     
     Attributes:
-        threads: Number of parallel download threads.
-                 Higher values speed up downloads but increase API rate limit risk.
-                 Recommended range: 1-8. Default: 4.
+        matching_threads: Number of parallel threads for YouTube matching (Phase 2).
+                         Higher values speed up matching but increase API rate limit risk.
+                         Recommended range: 4-8. Default: 8.
+        download_threads: Number of parallel threads for downloading (Phase 3).
+                         Lower values recommended to avoid YouTube rate limiting.
+                         Recommended range: 2-4. Default: 4.
         cookie_file: Optional path to a cookies.txt file exported from browser.
                      Required for YouTube Music Premium quality (256 kbps).
                      Without cookies, downloads are limited to 128 kbps.
                      The file should be exported from music.youtube.com using
                      a browser extension like "Get cookies.txt".
     """
-    threads: int
+    matching_threads: int
+    download_threads: int
     cookie_file: Path | None
 
 
@@ -331,27 +337,68 @@ def _parse_download_config(download_section: dict[str, Any] | None) -> DownloadC
     
     Returns:
         DownloadConfig: Validated download configuration with defaults applied.
-                        Default threads: 4
+                        Default matching_threads: 8
+                        Default download_threads: 4
                         Default cookie_file: None
     
     Raises:
-        ConfigError: If threads is not a positive integer, or if
+        ConfigError: If threads values are not positive integers, or if
                      cookie_file path doesn't exist when specified.
+    
+    Supported formats:
+        # New format (recommended):
+        download:
+          threads:
+            matching: 8
+            download: 4
+        
+        # Legacy format (uses value for both):
+        download:
+          threads: 4
     """
     # Defaults
-    threads = 4
+    matching_threads = 8
+    download_threads = 4
     cookie_file = None
     
     if download_section is not None:
-        # Parse threads
+        # Parse threads (supports both old and new format)
         raw_threads = download_section.get("threads")
         if raw_threads is not None:
-            if not isinstance(raw_threads, int) or raw_threads < 1:
+            if isinstance(raw_threads, int):
+                # Legacy format: single integer for both
+                if raw_threads < 1:
+                    raise ConfigError(
+                        "'download.threads' must be a positive integer",
+                        details={"field": "download.threads", "value": raw_threads}
+                    )
+                matching_threads = raw_threads
+                download_threads = raw_threads
+            elif isinstance(raw_threads, dict):
+                # New format: separate values for matching and download
+                raw_matching = raw_threads.get("matching")
+                raw_download = raw_threads.get("download")
+                
+                if raw_matching is not None:
+                    if not isinstance(raw_matching, int) or raw_matching < 1:
+                        raise ConfigError(
+                            "'download.threads.matching' must be a positive integer",
+                            details={"field": "download.threads.matching", "value": raw_matching}
+                        )
+                    matching_threads = raw_matching
+                
+                if raw_download is not None:
+                    if not isinstance(raw_download, int) or raw_download < 1:
+                        raise ConfigError(
+                            "'download.threads.download' must be a positive integer",
+                            details={"field": "download.threads.download", "value": raw_download}
+                        )
+                    download_threads = raw_download
+            else:
                 raise ConfigError(
-                    "'download.threads' must be a positive integer",
+                    "'download.threads' must be an integer or a dictionary with 'matching' and 'download' keys",
                     details={"field": "download.threads", "value": raw_threads}
                 )
-            threads = raw_threads
         
         # Parse cookie_file
         raw_cookie = download_section.get("cookie_file")
@@ -372,6 +419,7 @@ def _parse_download_config(download_section: dict[str, Any] | None) -> DownloadC
             cookie_file = cookie_path
     
     return DownloadConfig(
-        threads=threads,
+        matching_threads=matching_threads,
+        download_threads=download_threads,
         cookie_file=cookie_file
     )
